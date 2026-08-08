@@ -1,0 +1,52 @@
+{
+  "name": "kintsugi-md",
+  "version": "0.1.0",
+  "description": "A markdown parser that never fails on LLM output. Repairs broken markdown and shows you every seam.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:docs": "npm run build && node scripts/build-docs.mjs"
+  },
+  "keywords": [
+    "markdown",
+    "parser",
+    "llm",
+    "fault-tolerant",
+    "error-recovery",
+    "gfm",
+    "ast",
+    "commonmark",
+    "repair",
+    "diagnostics"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dangxingyu/kintsugi-md.git"
+  },
+  "homepage": "https://dangxingyu.github.io/kintsugi-md/",
+  "bugs": {
+    "url": "https://github.com/dangxingyu/kintsugi-md/issues"
+  },
+  "author": "dangxingyu",
+  "engines": {
+    "node": ">=18"
+  }
+}

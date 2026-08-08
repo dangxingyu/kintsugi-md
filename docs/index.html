@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kintsugi — a markdown parser that never fails on LLM output</title>
+<meta name="description" content="Kintsugi parses broken LLM-generated markdown that strict parsers refuse: missing table separators, unclosed fences, dangling bold, stray LaTeX. Every repair is logged.">
+<meta property="og:title" content="Kintsugi — a markdown parser that never fails on LLM output">
+<meta property="og:description" content="It repairs what the model broke, and shows you every seam.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏺</text></svg>">
+<style>
+  :root {
+    --bg: #0e0d0c;
+    --bg-raised: #17151300;
+    --panel: #171513;
+    --panel-2: #1e1b18;
+    --line: #2c2723;
+    --line-soft: #221e1a;
+    --ink: #ece7e0;
+    --ink-dim: #a49b90;
+    --ink-faint: #736b62;
+    --gold: #d4a25a;
+    --gold-bright: #f0c07f;
+    --gold-deep: #8a6529;
+    --repair: #d4a25a;
+    --note: #6f8fa8;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --maxw: 1120px;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fbf9f6;
+      --panel: #ffffff;
+      --panel-2: #f5f1ea;
+      --line: #e2dad0;
+      --line-soft: #eee8e0;
+      --ink: #221e1a;
+      --ink-dim: #5f574e;
+      --ink-faint: #8d8479;
+      --gold: #9a6f22;
+      --gold-bright: #b8862f;
+      --gold-deep: #d9be8e;
+      --repair: #9a6f22;
+      --note: #3d6480;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { color: var(--gold-bright); text-decoration: underline; text-underline-offset: 3px; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- the gold seam motif ---------- */
+  .seam {
+    height: 1px; border: 0; margin: 0;
+    background: linear-gradient(90deg, transparent, var(--gold-deep) 18%, var(--gold) 50%, var(--gold-deep) 82%, transparent);
+    opacity: .55;
+  }
+
+  /* ---------- header ---------- */
+  header.top {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .topbar { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; font-family: var(--serif); font-size: 20px; letter-spacing: .01em; }
+  .brand .kanji { color: var(--gold); font-size: 17px; letter-spacing: .08em; }
+  .brand strong { font-weight: 600; color: var(--ink); }
+  .topbar nav { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
+  .topbar nav a { color: var(--ink-dim); }
+  .topbar nav a:hover { color: var(--gold); text-decoration: none; }
+  @media (max-width: 720px) { .topbar nav a.hide-sm { display: none; } }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 84px 0 56px; position: relative; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: -40% 30% auto -20%; height: 520px;
+    background: radial-gradient(ellipse at 30% 40%, color-mix(in srgb, var(--gold) 12%, transparent), transparent 62%);
+    pointer-events: none;
+  }
+  .hero-inner { position: relative; max-width: 760px; }
+  h1.display {
+    font-family: var(--serif); font-weight: 600;
+    font-size: clamp(44px, 7.5vw, 78px); line-height: 1.03;
+    letter-spacing: -0.02em; margin: 0 0 6px;
+  }
+  h1.display .gold {
+    background: linear-gradient(100deg, var(--gold-bright), var(--gold) 45%, var(--gold-deep));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .kanji-mark { font-family: var(--serif); color: var(--gold); letter-spacing: .22em; font-size: 15px; margin: 0 0 18px; opacity: .9; }
+  .lede { font-size: clamp(18px, 2.2vw, 22px); color: var(--ink-dim); margin: 18px 0 0; max-width: 62ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; align-items: center; }
+  .install {
+    font-family: var(--mono); font-size: 14px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 11px 16px; border-radius: 9px; display: inline-flex; align-items: center; gap: 12px;
+  }
+  .install .prompt { color: var(--gold); }
+  .copy-btn {
+    background: none; border: 0; color: var(--ink-faint); cursor: pointer;
+    font-family: var(--sans); font-size: 12px; padding: 2px 6px; border-radius: 5px;
+  }
+  .copy-btn:hover { color: var(--gold); background: var(--panel-2); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 9px; font-size: 15px; font-weight: 500;
+    border: 1px solid var(--line); color: var(--ink); background: var(--panel);
+  }
+  .btn:hover { border-color: var(--gold-deep); color: var(--gold-bright); text-decoration: none; }
+  .btn.primary {
+    background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+    color: #1a1409; border-color: transparent; font-weight: 600;
+  }
+  .btn.primary:hover { color: #1a1409; filter: brightness(1.06); }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 34px; margin-top: 46px; }
+  .stat .n { font-family: var(--serif); font-size: 30px; color: var(--gold); line-height: 1; }
+  .stat .l { font-size: 13px; color: var(--ink-faint); margin-top: 6px; letter-spacing: .02em; }
+
+  /* ---------- sections ---------- */
+  section { padding: 76px 0; }
+  .eyebrow { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--gold); margin: 0 0 12px; font-weight: 600; }
+  h2 { font-family: var(--serif); font-size: clamp(28px, 3.6vw, 40px); font-weight: 600; letter-spacing: -0.015em; margin: 0 0 14px; }
+  .sub { color: var(--ink-dim); max-width: 68ch; margin: 0 0 34px; font-size: 17px; }
+
+  /* ---------- demo ---------- */
+  .demo-shell { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+  .demo-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
+  .tab {
+    font-size: 13px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid transparent; background: none; color: var(--ink-dim); font-family: var(--sans);
+  }
+  .tab:hover { color: var(--ink); background: var(--panel); }
+  .tab[aria-selected="true"] { background: var(--panel); border-color: var(--gold-deep); color: var(--gold-bright); }
+  .demo-grid { display: grid; grid-template-columns: 1fr 1fr; min-height: 430px; }
+  @media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; } }
+  .pane { display: flex; flex-direction: column; min-width: 0; }
+  .pane + .pane { border-left: 1px solid var(--line-soft); }
+  @media (max-width: 900px) { .pane + .pane { border-left: 0; border-top: 1px solid var(--line-soft); } }
+  .pane-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-faint); border-bottom: 1px solid var(--line-soft);
+  }
+  .pane-head .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); opacity: .8; }
+  textarea#src {
+    flex: 1; width: 100%; resize: vertical; min-height: 360px;
+    background: transparent; color: var(--ink); border: 0; outline: 0;
+    font-family: var(--mono); font-size: 13px; line-height: 1.6; padding: 16px; tab-size: 2;
+  }
+  .out { flex: 1; overflow: auto; padding: 18px; font-size: 15px; }
+  .out > :first-child { margin-top: 0; }
+  .out h1, .out h2, .out h3, .out h4 { font-family: var(--serif); line-height: 1.25; margin: 1.2em 0 .5em; }
+  .out h1 { font-size: 1.6em; } .out h2 { font-size: 1.35em; } .out h3 { font-size: 1.15em; }
+  .out p { margin: .75em 0; }
+  .out table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .92em; display: block; overflow-x: auto; }
+  .out th, .out td { border: 1px solid var(--line); padding: 7px 11px; text-align: left; }
+  .out th { background: var(--panel-2); font-weight: 600; }
+  .out pre { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: .86em; }
+  .out code { font-family: var(--mono); font-size: .88em; }
+  .out :not(pre) > code { background: var(--panel-2); padding: 1.5px 5px; border-radius: 4px; }
+  .out blockquote { border-left: 2px solid var(--gold-deep); margin: 1em 0; padding: 2px 0 2px 16px; color: var(--ink-dim); }
+  .out blockquote.markdown-alert { border-left-color: var(--gold); }
+  .out .markdown-alert-title { color: var(--gold); font-weight: 600; margin: 0 0 4px; font-size: .85em; letter-spacing: .05em; text-transform: uppercase; }
+  .out ul, .out ol { padding-left: 1.4em; margin: .7em 0; }
+  .out li { margin: .25em 0; }
+  .out hr { border: 0; border-top: 1px solid var(--line); margin: 1.6em 0; }
+  .out .admonition { border: 1px solid var(--line); border-left: 2px solid var(--gold); border-radius: 6px; padding: 10px 14px; margin: 1em 0; background: var(--panel-2); }
+  .out dl dt { font-weight: 600; margin-top: .7em; }
+  .out dl dd { margin: 0 0 .4em 1.2em; color: var(--ink-dim); }
+  .out .math { color: var(--gold-bright); font-family: var(--mono); font-size: .92em; }
+  .out mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inherit; padding: 0 3px; border-radius: 3px; }
+  .out .footnotes { border-top: 1px solid var(--line); margin-top: 2em; font-size: .88em; color: var(--ink-dim); }
+  .out img { max-width: 100%; }
+
+  /* diagnostics */
+  .diags { border-top: 1px solid var(--line-soft); background: var(--panel-2); max-height: 210px; overflow: auto; }
+  .diags-head {
+    position: sticky; top: 0; background: var(--panel-2);
+    display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .count { font-family: var(--mono); color: var(--gold); letter-spacing: 0; }
+  .diag { display: grid; grid-template-columns: 62px 1fr; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+  .diag:last-child { border-bottom: 0; }
+  .diag .where { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+  .diag .code { font-family: var(--mono); font-size: 12px; }
+  .diag.repair .code { color: var(--repair); }
+  .diag.note .code { color: var(--note); }
+  .diag .msg { color: var(--ink-dim); margin-top: 2px; }
+  .empty { padding: 22px 16px; color: var(--ink-faint); font-size: 13px; }
+
+  /* ---------- comparison ---------- */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px) { .compare { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+  .card.bad { border-color: color-mix(in srgb, #b04a3a 40%, var(--line)); }
+  .card.good { border-color: var(--gold-deep); }
+  .card-head { padding: 11px 16px; font-size: 13px; border-bottom: 1px solid var(--line-soft); display: flex; align-items: center; gap: 9px; }
+  .card.bad .card-head { color: #d1705f; }
+  .card.good .card-head { color: var(--gold); }
+  .card-body { padding: 16px; font-size: 14px; }
+  .card-body pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12.5px; color: var(--ink-dim); line-height: 1.55; }
+
+  /* ---------- features ---------- */
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 900px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .features { grid-template-columns: 1fr; } }
+  .feature { border: 1px solid var(--line); border-radius: 12px; padding: 20px; background: var(--panel); }
+  .feature:hover { border-color: var(--gold-deep); }
+  .feature h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+  .feature h3 .glyph { color: var(--gold); font-family: var(--mono); font-size: 13px; }
+  .feature p { margin: 0; font-size: 14px; color: var(--ink-dim); line-height: 1.6; }
+  .feature code { font-family: var(--mono); font-size: .9em; color: var(--ink); background: var(--panel-2); padding: 1px 4px; border-radius: 3px; }
+
+  /* ---------- philosophy / guards ---------- */
+  .guards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 40px; margin-top: 8px; }
+  @media (max-width: 800px) { .guards { grid-template-columns: 1fr; } }
+  .guard { display: grid; grid-template-columns: 20px 1fr; gap: 12px; font-size: 15px; color: var(--ink-dim); }
+  .guard .mark { color: var(--gold); font-family: var(--mono); }
+  .guard code { font-family: var(--mono); font-size: .88em; color: var(--ink); }
+
+  /* ---------- code block ---------- */
+  pre.snippet {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; line-height: 1.65; margin: 0;
+  }
+  pre.snippet .c { color: var(--ink-faint); }
+  pre.snippet .k { color: var(--gold); }
+  pre.snippet .s { color: #8fb08f; }
+
+  footer { border-top: 1px solid var(--line-soft); padding: 40px 0 60px; color: var(--ink-faint); font-size: 14px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .foot .spacer { margin-left: auto; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap topbar">
+    <div class="brand"><span class="kanji">金継ぎ</span><strong>Kintsugi</strong></div>
+    <nav>
+      <a href="#demo">Demo</a>
+      <a href="#repairs" class="hide-sm">Repairs</a>
+      <a href="#guards" class="hide-sm">Guards</a>
+      <a href="#usage">Usage</a>
+      <a href="https://github.com/dangxingyu/kintsugi-md">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap hero-inner">
+    <p class="kanji-mark">金 継 ぎ &nbsp;·&nbsp; THE ART OF VISIBLE REPAIR</p>
+    <h1 class="display">A markdown parser that<br><span class="gold">never fails</span> on LLM output.</h1>
+    <p class="lede">
+      Strict parsers were written for markdown a careful human wrote. Models write something else —
+      truncated fences, tables with no separator row, <strong>bold that never closes</strong>, stray LaTeX.
+      Kintsugi mends the document instead of refusing it, and <strong>logs every seam</strong> so nothing is
+      repaired behind your back.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#demo">Try it below ↓</a>
+      <span class="install"><span class="prompt">$</span><span id="installCmd">npm install kintsugi-md</span><button class="copy-btn" id="copyInstall">copy</button></span>
+      <a class="btn" href="https://github.com/dangxingyu/kintsugi-md">GitHub</a>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n" id="statTests">495</div><div class="l">tests passing</div></div>
+      <div class="stat"><div class="n">49</div><div class="l">diagnostic codes</div></div>
+      <div class="stat"><div class="n">0</div><div class="l">runtime dependencies</div></div>
+      <div class="stat"><div class="n">400k</div><div class="l">fuzz cases, zero throws</div></div>
+    </div>
+  </div>
+</div>
+
+<hr class="seam">
+
+<section id="demo">
+  <div class="wrap">
+    <p class="eyebrow">Live demo</p>
+    <h2>Break it. It won't break.</h2>
+    <p class="sub">
+      Everything below runs in your browser against the real parser. Pick a broken sample or paste your own —
+      the right pane shows what a reader gets, and the panel under it lists every repair with its source line.
+    </p>
+
+    <div class="demo-shell">
+      <div class="demo-tabs" id="tabs" role="tablist"></div>
+      <div class="demo-grid">
+        <div class="pane">
+          <div class="pane-head"><span class="dot"></span> Broken markdown — edit freely</div>
+          <textarea id="src" spellcheck="false" aria-label="Markdown input"></textarea>
+        </div>
+        <div class="pane">
+          <div class="pane-head"><span class="dot"></span> Rendered</div>
+          <div class="out" id="out"></div>
+          <div class="diags">
+            <div class="diags-head">Repair log <span class="count" id="diagCount">0</span></div>
+            <div id="diagList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="seam">
+
+<section id="compare">
+  <div class="wrap">
+    <p class="eyebrow">The problem</p>
+    <h2>One missing row of dashes</h2>
+    <p class="sub">
+      GFM requires a separator row under a table header. When a model omits it — which it does constantly —
+      the whole table degrades into a paragraph of pipe characters. This is the single most common way an
+      LLM report becomes unreadable.
+    </p>
+    <div class="compare">
+      <div class="card bad">
+        <div class="card-head">✕ Strict CommonMark / GFM</div>
+        <div class="card-body"><pre>| Model | MMLU | GSM8K |
+| GPT-4o | 88.7 | 94.2 |
+| Claude 3.5 Sonnet | 88.3 | 96.4 |</pre></div>
+      </div>
+      <div class="card good">
+        <div class="card-head">✓ Kintsugi</div>
+        <div class="card-body" id="compareGood"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="seam">
+
+<section id="repairs">
+  <div class="wrap">
+    <p class="eyebrow">What it repairs</p>
+    <h2>Built from a taxonomy of real mistakes</h2>
+    <p class="sub">
+      The recovery rules come from cataloguing how models actually break markdown, not from guessing.
+      Each one is covered by fixtures drawn from that catalogue.
+    </p>
+    <div class="features">
+      <div class="feature">
+        <h3><span class="glyph">| |</span> Tables</h3>
+        <p>Missing separator rows, miscounted separators, ragged rows (merged into the column whose shape fits, never truncated), unicode and box-drawing pipes, glued tables, wrapped cells.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">```</span> Code fences</h3>
+        <p>Never closed, wrong closing character, short closers, closers carrying trailing text, and nested fences inside a <code>```markdown</code> example.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">**</span> Emphasis</h3>
+        <p><code>**bold</code> that never closes — shut at the label colon or end of line, never spilling. Space-padded <code>** bold **</code>, mismatched <code>__bold**</code>, crossed ranges.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">∑</span> Math</h3>
+        <p><code>$x$</code>, <code>$$…$$</code>, <code>\(x\)</code>, <code>\[…\]</code> and bare <code>\begin{align}</code> all survive intact instead of being chewed into emphasis and brackets.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">•</span> Lists</h3>
+        <p>Unicode bullets, <code>(1)</code> / <code>a)</code> / <code>i.</code> markers, drifting indent widths, glued checkboxes, restarts, and commands left flush-left between steps.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">⌁</span> Truncation</h3>
+        <p>Documents that stop mid-fence, mid-table, mid-sentence. An unclosed fence ends where markdown structure plainly resumes rather than swallowing every section below.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">&lt;/&gt;</span> Scaffolding</h3>
+        <p><code>&lt;thinking&gt;</code> blocks and control tokens like <code>&lt;|im_end|&gt;</code> are recognised, kept in the AST, and left out of the rendered page.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">[^]</span> Extensions</h3>
+        <p>Footnotes, <code>==highlight==</code>, GitHub alerts, <code>:::note</code> containers, definition lists — the syntax models reach for that CommonMark lacks.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="glyph">↯</span> Linear time</h3>
+        <p>Eleven adversarial constructs are parsed at 4× scale in CI and fail the build if cost grows superlinearly. Ordinary documents parse at roughly 8&nbsp;MB/s.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="seam">
+
+<section id="guards">
+  <div class="wrap">
+    <p class="eyebrow">The hard part</p>
+    <h2>Knowing when <em>not</em> to help</h2>
+    <p class="sub">
+      Over-eager repair is what makes a tolerant parser worse than a strict one. If valid text gets
+      "fixed", you can no longer trust anything it renders. Every heuristic is guarded, and the guards
+      are tested as carefully as the repairs.
+    </p>
+    <div class="guards">
+      <div class="guard"><span class="mark">✓</span><div><code>a * b * c</code> is arithmetic, not emphasis. So is <code>2 ** 3</code>.</div></div>
+      <div class="guard"><span class="mark">✓</span><div><code>$5 and $10</code> is money. <code>$x^2$</code> is math.</div></div>
+      <div class="guard"><span class="mark">✓</span><div><code>#1 priority</code> and <code>#!/bin/sh</code> are not headings. <code>##Results</code> is.</div></div>
+      <div class="guard"><span class="mark">✓</span><div><code>*.py</code> and <code>**/*.ts</code> are globs, left alone.</div></div>
+      <div class="guard"><span class="mark">✓</span><div>One <code>|</code> in a sentence is not a table.</div></div>
+      <div class="guard"><span class="mark">✓</span><div>A lone <code>— Ada Lovelace</code> is an attribution; a run of them is a list.</div></div>
+      <div class="guard"><span class="mark">✓</span><div>Anything inside a code fence is never touched.</div></div>
+      <div class="guard"><span class="mark">✓</span><div>Well-formed markdown yields zero repairs and the standard reading.</div></div>
+      <div class="guard"><span class="mark">✕</span><div>Content is never deleted. Duplicated output keeps both copies.</div></div>
+      <div class="guard"><span class="mark">✕</span><div>Whitespace alignment alone never becomes a table.</div></div>
+    </div>
+  </div>
+</section>
+
+<hr class="seam">
+
+<section id="usage">
+  <div class="wrap">
+    <p class="eyebrow">Usage</p>
+    <h2>Two functions</h2>
+    <p class="sub">Parse to an AST with a repair log, or go straight to HTML. Written in TypeScript, ships its own types, no runtime dependencies.</p>
+    <pre class="snippet"><span class="k">import</span> { parse, render } <span class="k">from</span> <span class="s">'kintsugi-md'</span>;
+
+<span class="c">// AST plus the list of repairs that were applied to get there</span>
+<span class="k">const</span> { ast, diagnostics } = parse(source);
+
+<span class="c">// or straight to HTML</span>
+<span class="k">const</span> { html, diagnostics } = render(source);
+
+<span class="k">for</span> (<span class="k">const</span> d <span class="k">of</span> diagnostics) {
+  <span class="c">// repair | note   ·   1-based line in the ORIGINAL source</span>
+  console.log(<span class="s">`${d.severity} L${d.line} ${d.code} — ${d.message}`</span>);
+}</pre>
+  </div>
+</section>
+
+<hr class="seam">
+
+<footer>
+  <div class="wrap foot">
+    <span class="kanji" style="font-family:var(--serif);color:var(--gold)">金継ぎ</span>
+    <span>Kintsugi — MIT licensed</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/dangxingyu/kintsugi-md">GitHub</a>
+    <a href="https://www.npmjs.com/package/kintsugi-md">npm</a>
+  </div>
+</footer>
+
+<script src="./kintsugi.bundle.js"></script>
+<script>
+(function () {
+  var SAMPLES = [
+    {
+      name: 'Table, no separator',
+      md: '## Benchmark Results\n\n| Model | MMLU | GSM8K | Cost/1M |\n| GPT-4o | 88.7 | 94.2 | $2.50 |\n| Claude 3.5 Sonnet | 88.3 | 96.4 | $3.00 |\n| Llama-3-70B | 82.0 | 93.0 |\n'
+    },
+    {
+      name: 'Truncated fence',
+      md: "Here's the config you asked for:\n\n```yaml\nservice: api\nreplicas: 3\nresources:\n  cpu: 500m\n\n## Next Steps\n\nApply it with kubectl and watch the rollout complete.\n"
+    },
+    {
+      name: 'Dangling bold',
+      md: '- **Latency: p99 dropped from 480ms to 210ms after pooling.\n- **Throughput:** improved 2.1x under the same load.\n- **Cost:** unchanged.\n\nOverall this is *a clear win for the smaller model\n'
+    },
+    {
+      name: 'LaTeX math',
+      md: 'The loss is defined as:\n\n\\[\n\\mathcal{L} = -\\frac{1}{N}\\sum_{i=1}^{N} y_i \\log \\hat{y}_i\n\\]\n\nwhere \\(N\\) is the batch size and $\\hat{y}_i$ the prediction.\nBudget is $5 per run, capped at $200 total.\n'
+    },
+    {
+      name: 'Wrapped in a fence',
+      md: "Here's the report you asked for:\n\n```markdown\n# Weekly Summary\n\n##Highlights\n\n• Shipped the new ranking model\n• Cut p99 latency by 56%\n\n(1) Review the rollout plan\n(2) Schedule the postmortem\n```\n"
+    },
+    {
+      name: 'Everything at once',
+      md: '<thinking>\nThe user wants a table plus next steps.\n</thinking>\n\n#Incident Report\n\nSeverity\n---\n\n| Service | Status | Restarts |\n| api | DOWN | 14 |\n| worker | UP | 0 |\n\n> [!WARNING]\n> This migration ==cannot== be rolled back.\n\n-[ ] Page the on-call\n* [x] Post the status update\n\nRun the rollback:\n\nkubectl rollout undo deploy/api\n\nSee [the runbook] (https://example.com/runbook) for details[^1].\n\n[^1]: Updated after the March incident.\n'
+    },
+    {
+      name: 'Clean markdown',
+      md: '# Well-formed document\n\nThis one is *correct*, so Kintsugi changes **nothing** and reports no repairs.\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n- one\n- two\n\n```js\nconst x = 1;\n```\n'
+    }
+  ];
+
+  var srcEl = document.getElementById('src');
+  var outEl = document.getElementById('out');
+  var listEl = document.getElementById('diagList');
+  var countEl = document.getElementById('diagCount');
+  var tabsEl = document.getElementById('tabs');
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function run() {
+    var res;
+    try {
+      res = window.Kintsugi.render(srcEl.value);
+    } catch (e) {
+      outEl.innerHTML = '<p style="color:#d1705f">Unexpected error: ' + esc(e.message) + '</p>';
+      return;
+    }
+    outEl.innerHTML = res.html;
+
+    var ds = res.diagnostics;
+    countEl.textContent = ds.length;
+    if (!ds.length) {
+      listEl.innerHTML = '<div class="empty">No repairs needed — this parses as standard markdown.</div>';
+      return;
+    }
+    listEl.innerHTML = ds.map(function (d) {
+      return '<div class="diag ' + d.severity + '">' +
+        '<div class="where">L' + d.line + '</div>' +
+        '<div><div class="code">' + esc(d.code) + '</div>' +
+        '<div class="msg">' + esc(d.message) + '</div></div></div>';
+    }).join('');
+  }
+
+  SAMPLES.forEach(function (s, i) {
+    var b = document.createElement('button');
+    b.className = 'tab';
+    b.type = 'button';
+    b.textContent = s.name;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+    b.addEventListener('click', function () {
+      Array.prototype.forEach.call(tabsEl.children, function (c) { c.setAttribute('aria-selected', 'false'); });
+      b.setAttribute('aria-selected', 'true');
+      srcEl.value = s.md;
+      run();
+    });
+    tabsEl.appendChild(b);
+  });
+
+  srcEl.value = SAMPLES[0].md;
+  srcEl.addEventListener('input', run);
+  run();
+
+  // The side-by-side comparison renders through the real parser too.
+  var cmp = document.getElementById('compareGood');
+  if (cmp) {
+    cmp.innerHTML = '<div class="out" style="padding:0">' +
+      window.Kintsugi.render('| Model | MMLU | GSM8K |\n| GPT-4o | 88.7 | 94.2 |\n| Claude 3.5 Sonnet | 88.3 | 96.4 |').html +
+      '</div>';
+  }
+
+  var copyBtn = document.getElementById('copyInstall');
+  copyBtn.addEventListener('click', function () {
+    navigator.clipboard.writeText(document.getElementById('installCmd').textContent).then(function () {
+      copyBtn.textContent = 'copied';
+      setTimeout(function () { copyBtn.textContent = 'copy'; }, 1400);
+    });
+  });
+})();
+</script>
+</body>
+</html>
