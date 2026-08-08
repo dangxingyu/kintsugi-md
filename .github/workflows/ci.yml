@@ -17,3 +17,18 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  docs-bundle:
+    # The demo on the landing page runs the real parser, so the committed
+    # bundle has to match the source it claims to demonstrate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build:docs
+      - name: docs bundle is up to date
+        run: git diff --exit-code -- docs/kintsugi.bundle.js

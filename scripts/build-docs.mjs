@@ -47,12 +47,32 @@ out += `\nwindow.Kintsugi = { parse, render, renderHtml };\n`;
 const target = join(root, 'docs', 'kintsugi.bundle.js');
 writeFileSync(target, out);
 
-// Fail loudly rather than shipping a bundle that does not evaluate.
+// Concatenating modules cannot represent an `import { x as y }` alias, and a
+// missing binding only shows up at runtime — inside the parser's own
+// never-throw handler, which turns it into a plausible-looking diagnostic.
+// So exercise several documents and reject any internal error.
 const sandbox = {};
 new Function('window', out)(sandbox);
-const probe = sandbox.Kintsugi.render('| a | b |\n| 1 | 2 |');
-if (!probe.html.includes('<table>') || probe.diagnostics.length === 0) {
-  throw new Error('bundle smoke test failed');
+
+const PROBES = [
+  ['broken table', '| a | b |\n| 1 | 2 |', 1],
+  ['clean document', '# T\n\nText.\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n- one\n- two\n\n```js\nconst x = 1;\n```\n', 0],
+  ['lists and fences', '1. Build:\n```sh\nmake\n```\n2. Ship\n', null],
+  ['math and footnotes', 'See \\(x\\) and $y$[^1].\n\n[^1]: note\n', null],
+];
+
+for (const [name, src, expectedRepairs] of PROBES) {
+  const r = sandbox.Kintsugi.render(src);
+  const internal = r.diagnostics.filter((d) => /Internal parser error/.test(d.message));
+  if (internal.length > 0) {
+    throw new Error(`bundle smoke test "${name}" hit an internal error: ${internal[0].message}`);
+  }
+  if (expectedRepairs !== null) {
+    const repairs = r.diagnostics.filter((d) => d.severity === 'repair').length;
+    if (repairs !== expectedRepairs) {
+      throw new Error(`bundle smoke test "${name}": expected ${expectedRepairs} repairs, got ${repairs}`);
+    }
+  }
 }
 
 console.log(`wrote docs/kintsugi.bundle.js (${(out.length / 1024).toFixed(0)} KB)`);

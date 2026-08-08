@@ -2615,7 +2615,7 @@ function consumeList(lines, start, first, ctx, blocks) {
         // A flush-left block sandwiched between two items of this list — a command
         // the model forgot to indent — belongs to the item above it.
         if (j < n && !isBlank(lines[j].text) && matchListMarker(lines[j].text) === null) {
-            const resume = findSandwichedBlockEnd(lines, j, first);
+            const resume = findSandwichedBlockEnd(lines, j, first, pendingBlanks.length === 0);
             if (resume !== -1) {
                 diag.repair('list-indent-adjusted', 'Flush-left block between two list items attached to the item above', lines[j].lineNo);
                 if (pendingBlanks.length > 0) {
@@ -2777,7 +2777,7 @@ function normalizeIndents(lines) {
  * Guard for ambiguous marker shapes: require a sibling item of the same shape
  * so a single "— Ada Lovelace" or "a. thing" stays a paragraph.
  */
-function ambiguousBulletHasSibling(lines, start, marker) {
+function listMarkerHasSibling(lines, start, marker) {
     if (!needsSibling(marker))
         return true;
     for (let j = start + 1; j < lines.length; j++) {
@@ -2821,10 +2821,13 @@ function looksLikeCommand(text) {
         return false;
     return COMMAND_HEADS.test(s);
 }
-function findSandwichedBlockEnd(lines, start, first) {
+function findSandwichedBlockEnd(lines, start, first, attached) {
     const LIMIT = 25;
     let fence = null;
     let sawAbsorbable = false;
+    // Tracked separately: a *fenced* block after the last item is normally a
+    // sibling of the list, while a bare command line is orphaned continuation.
+    let sawCommand = false;
     for (let j = start; j < lines.length && j - start < LIMIT; j++) {
         const t = lines[j].text;
         if (fence) {
@@ -2850,14 +2853,17 @@ function findSandwichedBlockEnd(lines, start, first) {
             continue;
         if (looksLikeCommand(t)) {
             sawAbsorbable = true;
+            sawCommand = true;
             continue;
         }
         // Anything else — prose, a heading, a rule — ends the list.
         return -1;
     }
-    // Ran to the end of input: a trailing command block still belongs to the
-    // last item, but trailing commentary does not.
-    return sawAbsorbable ? Math.min(start + LIMIT, lines.length) : -1;
+    // Ran to the end of input with no further item. A trailing bare command is
+    // orphaned continuation of the last step, and so is a block that touches the
+    // item with no blank line between. A fenced block set off by a blank line is
+    // a sibling of the list, not part of it.
+    return sawCommand || (attached && sawAbsorbable) ? Math.min(start + LIMIT, lines.length) : -1;
 }
 /**
  * Does the restart at `start` begin a genuinely new sequence (1, 2, 3…) rather

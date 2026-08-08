@@ -521,7 +521,7 @@ export function normalizeIndents(lines: Line[]): { lines: Line[]; adjusted: bool
  * Guard for ambiguous marker shapes: require a sibling item of the same shape
  * so a single "— Ada Lovelace" or "a. thing" stays a paragraph.
  */
-export function ambiguousBulletHasSibling(lines: Line[], start: number, marker: ListMarker): boolean {
+export function listMarkerHasSibling(lines: Line[], start: number, marker: ListMarker): boolean {
   if (!needsSibling(marker)) return true;
   for (let j = start + 1; j < lines.length; j++) {
     const t = lines[j]!.text;

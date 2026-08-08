@@ -16,7 +16,7 @@ import { inlinePlainText, parseInlines } from './inline-parser.js';
 import type { FenceOpen } from './scanners.js';
 import type { Ctx } from './context.js';
 import { MAX_NESTING } from './context.js';
-import { ambiguousBulletHasSibling as listMarkerHasSibling, consumeList, matchListMarker, needsSibling } from './list-parser.js';
+import { consumeList, listMarkerHasSibling, matchListMarker, needsSibling } from './list-parser.js';
 import { tryConsumeTable } from './table-parser.js';
 import {
   MD_FENCE_LANGS,
