@@ -9,6 +9,19 @@
 <meta property="og:description" content="It repairs what the model broke, and shows you every seam.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏺</text></svg>">
+<!--
+  KaTeX typesets the math nodes Kintsugi produces. The parser's job ends at
+  identifying math and handing it over intact; turning TeX into glyphs is a
+  separate concern, and this demo would misrepresent the feature if it showed
+  raw source. Loaded with integrity hashes, and the page degrades to showing
+  the delimited source if it fails to load.
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css"
+      integrity="sha384-5TcZemv2l/9On385z///+d7MSYlvIEw9FuZTIdZ14vJLqWphw7e7ZPuOiCHJcFCP"
+      crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"
+        integrity="sha384-cMkvdD8LoxVzGF/RPUKAcvmm49FQ0oxwDF3BGKtDXcEc+T1b2N+teh/OJfpU0jr6"
+        crossorigin="anonymous"></script>
 <style>
   :root {
     --bg: #0e0d0c;
@@ -187,7 +200,12 @@
   .out .admonition { border: 1px solid var(--line); border-left: 2px solid var(--gold); border-radius: 6px; padding: 10px 14px; margin: 1em 0; background: var(--panel-2); }
   .out dl dt { font-weight: 600; margin-top: .7em; }
   .out dl dd { margin: 0 0 .4em 1.2em; color: var(--ink-dim); }
-  .out .math { color: var(--gold-bright); font-family: var(--mono); font-size: .92em; }
+  /* Un-typeset math (KaTeX absent or the TeX was invalid) keeps the source
+     visible and marked as such. Once typeset, KaTeX owns the styling. */
+  .out .math:not([data-typeset="done"]) { color: var(--gold-bright); font-family: var(--mono); font-size: .92em; }
+  .out .math[data-typeset="done"] { color: var(--ink); }
+  .out .katex { font-size: 1.04em; }
+  .out .katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
   .out mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inherit; padding: 0 3px; border-radius: 3px; }
   .out .footnotes { border-top: 1px solid var(--line); margin-top: 2em; font-size: .88em; color: var(--ink-dim); }
   .out img { max-width: 100%; }
@@ -302,6 +320,12 @@
     <p class="sub">
       Everything below runs in your browser against the real parser. Pick a broken sample or paste your own —
       the right pane shows what a reader gets, and the panel under it lists every repair with its source line.
+    </p>
+    <p class="sub" style="margin-top:-22px">
+      <em>On math:</em> Kintsugi's job is to recognise <code>$x$</code>, <code>\(x\)</code> and <code>\[…\]</code> and hand the
+      TeX over intact instead of shredding it into emphasis and brackets. Turning TeX into glyphs is a separate
+      concern, so this page pipes those nodes through <a href="https://katex.org">KaTeX</a> — swap in MathJax, or
+      none at all, and the parser is unchanged.
     </p>
 
     <div class="demo-shell">
@@ -507,6 +531,33 @@
     });
   }
 
+  /**
+   * Typeset the math nodes Kintsugi emitted.
+   *
+   * The library hands back `<span class="math math-inline">$x$</span>` — the
+   * TeX preserved with its delimiters, ready for whichever typesetter you use.
+   * Here that is KaTeX. If it did not load, or the TeX is genuinely invalid,
+   * the delimited source stays on screen rather than vanishing.
+   */
+  function typesetMath(root) {
+    if (typeof window.katex === 'undefined') return;
+    var nodes = root.querySelectorAll('.math');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el.dataset.typeset === 'done') continue;
+      var display = el.classList.contains('math-display');
+      var tex = el.textContent.trim();
+      // Strip the delimiters the renderer re-emitted.
+      tex = tex.replace(/^\$\$([\s\S]*)\$\$$/, '$1').replace(/^\$([\s\S]*)\$$/, '$1').trim();
+      try {
+        window.katex.render(tex, el, { displayMode: display, throwOnError: false, strict: false });
+        el.dataset.typeset = 'done';
+      } catch (e) {
+        el.dataset.typeset = 'failed';
+      }
+    }
+  }
+
   function run() {
     var res;
     try {
@@ -516,6 +567,7 @@
       return;
     }
     outEl.innerHTML = res.html;
+    typesetMath(outEl);
 
     var ds = res.diagnostics;
     countEl.textContent = ds.length;
@@ -550,6 +602,13 @@
   srcEl.value = SAMPLES[0].md;
   srcEl.addEventListener('input', run);
   run();
+
+  // KaTeX is deferred, so the first render usually happens before it exists.
+  // Typeset again once it arrives.
+  window.addEventListener('load', function () {
+    typesetMath(outEl);
+    typesetMath(document.getElementById('compareGood'));
+  });
 
   // The side-by-side comparison renders through the real parser too.
   var cmp = document.getElementById('compareGood');

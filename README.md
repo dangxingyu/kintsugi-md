@@ -124,8 +124,13 @@ inner ```` ``` ```` is example content rather than the real closer.
 label colon for the very common `**Label: text` bullet pattern), `** padded bold **` that strict
 flanking rules refuse, and mismatched delimiter species like `__bold**`.
 
-**Math** — `$x$`, `$$…$$`, `\(x\)` and `\[…\]` all survive as math nodes instead of being
-dismembered into emphasis and brackets. `$5 and $10` is still money, not math.
+**Math** — `$x$`, `$$…$$`, `\(x\)`, `\[…\]` and bare `\begin{align}` environments all survive as
+math nodes instead of being dismembered into emphasis and brackets. `$5 and $10` is still money.
+
+Kintsugi recognises math and preserves the TeX; it does not typeset it. `renderHtml` emits
+`<span class="math math-inline">$x$</span>` (or a `div.math-display`), which is what KaTeX and
+MathJax expect to be handed. The [live demo](https://dangxingyu.github.io/kintsugi-md/) pipes those
+nodes through KaTeX in about fifteen lines — see `docs/index.html`.
 
 **Headings** — `##Heading` with no space, seven or more `#`, trailing hash runs, and the
 `Title` / `---` ambiguity, where a short title-like line takes the setext reading and a full
