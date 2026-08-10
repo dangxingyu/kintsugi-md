@@ -36,6 +36,15 @@ describe('cluster 1: HTML blocks split across blank lines are not force-closed',
     expect(repairs(src)).toEqual([]);
   });
 
+  it('sees a closer that lives outside the list item the tag opened in', () => {
+    // The closer index must be document-scoped: block parsing recurses on
+    // sliced line arrays, and a <details> opened inside a list item routinely
+    // closes outside it. A slice-scoped index cannot see that and force-closes.
+    const src = ['- Item one', '  <details>', '  <summary>Go SDK</summary>', '', '  install steps', '', '- Item two', '', '</details>', '', 'After.'].join('\n');
+    expect(count(render(src).html, '</details>')).toBe(1);
+    expect(repairs(src)).toEqual([]);
+  });
+
   it('STILL closes a tag that is genuinely never closed anywhere below', () => {
     const src = '<details>\n<summary>Truncated</summary>\n\nBody that never closes.';
     const { html } = render(src);

@@ -3,7 +3,7 @@ import { DiagnosticBag } from './types.js';
 import { toLines, isBlank } from './preprocess.js';
 import type { Line } from './preprocess.js';
 import { parseBlocks } from './block-parser.js';
-import { collectRefs, detectAtxStyle, detectRichDocument } from './context.js';
+import { collectRefs, detectAtxStyle, detectRichDocument, indexHtmlClosers } from './context.js';
 import { parseInlines } from './inline-parser.js';
 import type { Ctx } from './context.js';
 import { renderHtml } from './renderer.js';
@@ -41,6 +41,7 @@ export function parse(src: string, options: ParseOptions = {}): ParseResult {
       prefersThematicBreak: detectAtxStyle(lines),
       richDocument: detectRichDocument(lines),
       depth: 0,
+      htmlClosers: indexHtmlClosers(lines),
       footnoteOrder: [],
       footnoteDefs: new Map(),
       footnoteIndex: new Map(),

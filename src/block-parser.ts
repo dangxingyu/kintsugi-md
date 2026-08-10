@@ -790,7 +790,8 @@ function consumeHtmlBlock(
   // closer appears NOWHERE later in the document; then it is genuinely
   // unclosed and a sanitizer downstream would otherwise eat everything after.
   const unclosed = openTagsOf(raw);
-  const trulyUnclosed = unclosed.filter((tag) => !closerAppearsLater(lines, j, tag));
+  const fromLineNo = lines[Math.min(j, n) - 1]!.lineNo;
+  const trulyUnclosed = unclosed.filter((tag) => !closerAppearsLater(ctx, fromLineNo, tag));
   if (trulyUnclosed.length > 0) {
     ctx.diag.repair(
       'html-escaped-unknown-tag',
@@ -812,6 +813,12 @@ function consumeHtmlBlock(
   return j;
 }
 
+/** HTML elements that never have a closing tag. */
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'source', 'track', 'wbr',
+]);
+
 /** Tags left open by this fragment, outermost first. */
 function openTagsOf(html: string): string[] {
   const open: string[] = [];
@@ -830,40 +837,25 @@ function openTagsOf(html: string): string[] {
   return open;
 }
 
-/** Does `</tag>` occur on any line at or after `from`? Memoized per document. */
-const closerIndexCache = new WeakMap<Line[], Map<string, number[]>>();
-function closerAppearsLater(lines: Line[], from: number, tag: string): boolean {
-  let index = closerIndexCache.get(lines);
-  if (index === undefined) {
-    index = new Map();
-    const re = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/g;
-    for (let k = 0; k < lines.length; k++) {
-      let m: RegExpExecArray | null;
-      re.lastIndex = 0;
-      while ((m = re.exec(lines[k]!.text)) !== null) {
-        const t = m[1]!.toLowerCase();
-        const list = index.get(t);
-        if (list === undefined) index.set(t, [k]);
-        else list.push(k);
-      }
-    }
-    closerIndexCache.set(lines, index);
-  }
-  const list = index.get(tag.toLowerCase());
+/**
+ * Does `</tag>` appear at or after this source line, anywhere in the document?
+ *
+ * Deliberately consults the document-wide index on `ctx` rather than the line
+ * array being parsed: that array is a slice when we are inside a list item or
+ * blockquote, and the closer is often outside it.
+ */
+function closerAppearsLater(ctx: Ctx, fromLineNo: number, tag: string): boolean {
+  const list = ctx.htmlClosers.get(tag.toLowerCase());
   if (list === undefined) return false;
-  // Binary search: first closer at or after `from`.
   let lo = 0;
   let hi = list.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (list[mid]! >= from) hi = mid;
+    if (list[mid]! >= fromLineNo) hi = mid;
     else lo = mid + 1;
   }
   return lo < list.length;
 }
-
-const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
-
 
 function consumeIndentedChunk(lines: Line[], start: number, ctx: Ctx, blocks: Block[]): number {
   const { diag } = ctx;

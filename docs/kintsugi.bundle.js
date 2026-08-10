@@ -406,6 +406,24 @@ function detectRichDocument(lines) {
     }
     return false;
 }
+/** Index every `</tag>` in the document by tag, in source-line order. */
+function indexHtmlClosers(lines) {
+    const index = new Map();
+    const re = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/g;
+    for (const line of lines) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(line.text)) !== null) {
+            const tag = m[1].toLowerCase();
+            const list = index.get(tag);
+            if (list === undefined)
+                index.set(tag, [line.lineNo]);
+            else
+                list.push(line.lineNo);
+        }
+    }
+    return index;
+}
 /** Does this document use ATX headings as its heading convention? */
 function detectAtxStyle(lines) {
     let atx = 0;
@@ -4097,7 +4115,8 @@ function consumeHtmlBlock(lines, start, info, ctx, blocks) {
     // closer appears NOWHERE later in the document; then it is genuinely
     // unclosed and a sanitizer downstream would otherwise eat everything after.
     const unclosed = openTagsOf(raw);
-    const trulyUnclosed = unclosed.filter((tag) => !closerAppearsLater(lines, j, tag));
+    const fromLineNo = lines[Math.min(j, n) - 1].lineNo;
+    const trulyUnclosed = unclosed.filter((tag) => !closerAppearsLater(ctx, fromLineNo, tag));
     if (trulyUnclosed.length > 0) {
         ctx.diag.repair('html-escaped-unknown-tag', `HTML ${trulyUnclosed.map((t) => '<' + t + '>').join(', ')} never closed anywhere below; appended the missing closing tags`, lines[start].lineNo);
         blocks.push({
@@ -4114,6 +4133,11 @@ function consumeHtmlBlock(lines, start, info, ctx, blocks) {
     });
     return j;
 }
+/** HTML elements that never have a closing tag. */
+const VOID_TAGS = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'source', 'track', 'wbr',
+]);
 /** Tags left open by this fragment, outermost first. */
 function openTagsOf(html) {
     const open = [];
@@ -4133,43 +4157,28 @@ function openTagsOf(html) {
     }
     return open;
 }
-/** Does `</tag>` occur on any line at or after `from`? Memoized per document. */
-const closerIndexCache = new WeakMap();
-function closerAppearsLater(lines, from, tag) {
-    let index = closerIndexCache.get(lines);
-    if (index === undefined) {
-        index = new Map();
-        const re = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/g;
-        for (let k = 0; k < lines.length; k++) {
-            let m;
-            re.lastIndex = 0;
-            while ((m = re.exec(lines[k].text)) !== null) {
-                const t = m[1].toLowerCase();
-                const list = index.get(t);
-                if (list === undefined)
-                    index.set(t, [k]);
-                else
-                    list.push(k);
-            }
-        }
-        closerIndexCache.set(lines, index);
-    }
-    const list = index.get(tag.toLowerCase());
+/**
+ * Does `</tag>` appear at or after this source line, anywhere in the document?
+ *
+ * Deliberately consults the document-wide index on `ctx` rather than the line
+ * array being parsed: that array is a slice when we are inside a list item or
+ * blockquote, and the closer is often outside it.
+ */
+function closerAppearsLater(ctx, fromLineNo, tag) {
+    const list = ctx.htmlClosers.get(tag.toLowerCase());
     if (list === undefined)
         return false;
-    // Binary search: first closer at or after `from`.
     let lo = 0;
     let hi = list.length;
     while (lo < hi) {
         const mid = (lo + hi) >> 1;
-        if (list[mid] >= from)
+        if (list[mid] >= fromLineNo)
             hi = mid;
         else
             lo = mid + 1;
     }
     return lo < list.length;
 }
-const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 function consumeIndentedChunk(lines, start, ctx, blocks) {
     const { diag } = ctx;
     const n = lines.length;
@@ -4805,6 +4814,7 @@ function parse(src, options = {}) {
             prefersThematicBreak: detectAtxStyle(lines),
             richDocument: detectRichDocument(lines),
             depth: 0,
+            htmlClosers: indexHtmlClosers(lines),
             footnoteOrder: [],
             footnoteDefs: new Map(),
             footnoteIndex: new Map(),

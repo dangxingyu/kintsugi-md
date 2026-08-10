@@ -39,6 +39,16 @@ export interface Ctx {
   richDocument: boolean;
   /** Current container nesting depth, capped so pathological input is safe. */
   depth: number;
+  /**
+   * Line numbers of every `</tag>` in the WHOLE document, by tag.
+   *
+   * Keyed off the document rather than the line array being parsed: block
+   * parsing recurses on sliced arrays (a list item, a blockquote), and an HTML
+   * closer for a tag opened inside a list item routinely sits outside it. An
+   * index scoped to the slice cannot see that closer and force-closes the tag —
+   * the exact bug this whole cluster was about, reintroduced one level down.
+   */
+  htmlClosers: Map<string, number[]>;
   /** Footnote labels in first-use order; the index is the visible marker. */
   footnoteOrder: string[];
   /** `[^label]: text` definitions found anywhere in the document. */
@@ -79,6 +89,23 @@ export function detectRichDocument(lines: Line[]): boolean {
     if (signals >= 3) return true;
   }
   return false;
+}
+
+/** Index every `</tag>` in the document by tag, in source-line order. */
+export function indexHtmlClosers(lines: Line[]): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  const re = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/g;
+  for (const line of lines) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line.text)) !== null) {
+      const tag = m[1]!.toLowerCase();
+      const list = index.get(tag);
+      if (list === undefined) index.set(tag, [line.lineNo]);
+      else list.push(line.lineNo);
+    }
+  }
+  return index;
 }
 
 /** Does this document use ATX headings as its heading convention? */
