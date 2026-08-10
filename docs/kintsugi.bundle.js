@@ -3301,6 +3301,7 @@ function buildTable(lines, headerIdx, sepIdx, align, nonstandardSep, ctx, blocks
 
 
 
+
 function interruptsParagraph(text, nextText) {
     if (matchFenceOpen(text))
         return true;
@@ -4311,7 +4312,7 @@ function emitParagraphAsSetext(para, depth, underline, ctx, blocks) {
  * sentence stays a paragraph: the line must be entirely inside one delimiter
  * pair, be short, and not read as a sentence.
  */
-function boldHeadingText(para) {
+function boldHeadingText(para, mode) {
     if (para.length !== 1)
         return null;
     const t = para[0].text.trim();
@@ -4336,12 +4337,31 @@ function boldHeadingText(para) {
     const labelLike = inner.endsWith(':') ||
         /^(step|section|phase|stage|part|chapter|appendix|note|summary|overview|conclusion)\b/i.test(inner) ||
         isTitleCased(inner);
-    if (!labelLike)
-        return null;
-    return inner;
+    if (labelLike)
+        return inner;
+    // The rule above is blind outside ASCII-title-cased text: Chinese, Japanese,
+    // Korean and Arabic have no letter case at all, so it can never fire, and a
+    // section header in those scripts was silently demoted to a paragraph. Where
+    // its signal does not apply, defer to the classifier, which was fitted on
+    // real headings across scripts. Where the signal DOES apply the rule keeps
+    // the last word, because it is measurably more precise there.
+    if (mode !== 'rule' && !ruleSignalApplies(inner)) {
+        const decided = isHeadingByModel({
+            text: inner,
+            delimiter: m[1],
+            docUsesAtx: false,
+            siblingBoldLines: 0,
+            followedByBlank: true,
+            followedByParagraph: true,
+            relativePosition: 0,
+        });
+        if (decided === true)
+            return inner;
+    }
+    return null;
 }
 function flushParagraph(para, ctx, blocks) {
-    const bold = boldHeadingText(para);
+    const bold = boldHeadingText(para, ctx.options.headingDetection);
     if (bold !== null) {
         ctx.diag.repair('heading-missing-space', `Bold-only line "${bold.slice(0, 40)}" promoted to a heading`, para[0].lineNo);
         blocks.push({
@@ -4584,6 +4604,7 @@ const DEFAULTS = {
     math: true,
     frontmatter: true,
     inlineRecovery: 'auto',
+    headingDetection: 'auto',
 };
 /**
  * Parse markdown. Never throws: any input yields a Document plus the list of

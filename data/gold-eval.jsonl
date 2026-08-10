@@ -1,0 +1,60 @@
+{"label":1,"text":"Section 2: Results","language":"english","note":"canonical numbered section title"}
+{"label":1,"text":"Executive Summary","language":"english","note":"title case"}
+{"label":1,"text":"Installation","language":"english","note":"single word title"}
+{"label":1,"text":"Getting Started","language":"english","note":"title case"}
+{"label":1,"text":"Step 3 — Deploy the service:","language":"english","note":"trailing colon label"}
+{"label":1,"text":"Key Takeaways","language":"english","note":"title case"}
+{"label":1,"text":"SYSTEM REQUIREMENTS","language":"english","note":"all caps"}
+{"label":1,"text":"Benchmark Results","language":"english","note":"title case"}
+{"label":1,"text":"API Reference","language":"english","note":"title case"}
+{"label":1,"text":"Known Limitations","language":"english","note":"title case"}
+{"label":0,"text":"Never deploy on a Friday","language":"english","note":"emphatic warning, sentence-cased"}
+{"label":0,"text":"This is the single most important thing to remember","language":"english","note":"long sentence fragment"}
+{"label":0,"text":"Do not run this in production.","language":"english","note":"imperative with period"}
+{"label":0,"text":"It only takes one bad deploy to lose a week","language":"english","note":"sentence, no terminal punct"}
+{"label":0,"text":"we strongly recommend pinning the version","language":"english","note":"lowercase clause"}
+{"label":0,"text":"Please read the migration guide first!","language":"english","note":"exclamation"}
+{"label":0,"text":"the results were statistically significant","language":"english","note":"lowercase clause"}
+{"label":0,"text":"Make sure you have Node 18 or later installed","language":"english","note":"instruction sentence"}
+{"label":1,"text":"实验结果","language":"chinese","note":"CJK title, no case signal at all"}
+{"label":1,"text":"第二节：实验结果","language":"chinese","note":"CJK numbered section"}
+{"label":1,"text":"安装步骤","language":"chinese","note":"CJK title"}
+{"label":1,"text":"快速开始","language":"chinese","note":"CJK title"}
+{"label":1,"text":"常见问题","language":"chinese","note":"CJK title"}
+{"label":1,"text":"性能对比","language":"chinese","note":"CJK title"}
+{"label":0,"text":"周五千万不要发布。","language":"chinese","note":"CJK sentence with fullwidth period"}
+{"label":0,"text":"请先阅读迁移指南！","language":"chinese","note":"CJK sentence with fullwidth exclamation"}
+{"label":0,"text":"这个功能在最新版本中已经被移除了","language":"chinese","note":"CJK sentence, no terminal punct"}
+{"label":0,"text":"我们强烈建议您锁定依赖的版本号","language":"chinese","note":"CJK recommendation sentence"}
+{"label":0,"text":"如果你遇到问题，可以查看日志文件。","language":"chinese","note":"CJK sentence with comma and period"}
+{"label":1,"text":"実験結果","language":"japanese","note":"JA title"}
+{"label":1,"text":"インストール方法","language":"japanese","note":"JA title"}
+{"label":0,"text":"金曜日にデプロイしないでください。","language":"japanese","note":"JA sentence"}
+{"label":0,"text":"この機能は最新版で削除されました。","language":"japanese","note":"JA sentence"}
+{"label":1,"text":"설치 방법","language":"korean","note":"KO title"}
+{"label":0,"text":"금요일에는 배포하지 마세요.","language":"korean","note":"KO sentence"}
+{"label":1,"text":"Результаты эксперимента","language":"russian","note":"RU title, sentence-cased by convention"}
+{"label":1,"text":"Установка","language":"russian","note":"RU single word title"}
+{"label":1,"text":"Быстрый старт","language":"russian","note":"RU title"}
+{"label":0,"text":"Не развёртывайте в пятницу.","language":"russian","note":"RU sentence"}
+{"label":0,"text":"мы настоятельно рекомендуем закрепить версию","language":"russian","note":"RU lowercase clause"}
+{"label":0,"text":"Эта функция была удалена в последней версии","language":"russian","note":"RU sentence"}
+{"label":1,"text":"Ergebnisse der Messung","language":"german","note":"DE title with lowercase particle — breaks naive title-case"}
+{"label":1,"text":"Installation und Konfiguration","language":"german","note":"DE title with lowercase conjunction"}
+{"label":0,"text":"Bitte lesen Sie zuerst die Anleitung.","language":"german","note":"DE sentence"}
+{"label":0,"text":"Diese Funktion wurde in der neuesten Version entfernt","language":"german","note":"DE sentence"}
+{"label":1,"text":"Résultats de l'expérience","language":"french","note":"FR title with lowercase particle"}
+{"label":1,"text":"Mise en route","language":"french","note":"FR title, sentence-cased"}
+{"label":0,"text":"Ne déployez jamais un vendredi.","language":"french","note":"FR sentence"}
+{"label":0,"text":"nous recommandons fortement de figer la version","language":"french","note":"FR lowercase clause"}
+{"label":1,"text":"النتائج","language":"arabic","note":"AR title"}
+{"label":1,"text":"دليل التثبيت","language":"arabic","note":"AR title"}
+{"label":0,"text":"لا تنشر يوم الجمعة.","language":"arabic","note":"AR sentence"}
+{"label":1,"text":"Resultados del experimento","language":"spanish","note":"ES title with lowercase particle"}
+{"label":0,"text":"No despliegues nunca un viernes.","language":"spanish","note":"ES sentence"}
+{"label":1,"text":"Risultati dell'esperimento","language":"italian","note":"IT title"}
+{"label":0,"text":"Non fare mai il deploy di venerdì.","language":"italian","note":"IT sentence"}
+{"label":1,"text":"Resultados do experimento","language":"portuguese","note":"PT title"}
+{"label":0,"text":"Nunca faça deploy numa sexta-feira.","language":"portuguese","note":"PT sentence"}
+{"label":1,"text":"Kurulum Adımları","language":"turkish","note":"TR title"}
+{"label":0,"text":"Cuma günü asla dağıtım yapmayın.","language":"turkish","note":"TR sentence"}

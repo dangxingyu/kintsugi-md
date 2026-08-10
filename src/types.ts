@@ -395,6 +395,14 @@ export interface ParseOptions {
    * to CommonMark literalization. Default 'auto'.
    */
   inlineRecovery?: 'auto' | 'strict';
+  /**
+   * How a lone bold line is judged to be a section heading. 'auto' uses the
+   * hand-written rule where its ASCII title-case signal applies, and a small
+   * pinned classifier elsewhere — which is what makes headings work in Chinese,
+   * Japanese, Korean and Arabic. 'rule' disables the classifier entirely.
+   * Default 'auto'.
+   */
+  headingDetection?: 'rule' | 'auto';
 }
 
 export interface ParseResult {

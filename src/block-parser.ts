@@ -13,6 +13,7 @@ import {
   parseSeparatorRow,
 } from './table-shape.js';
 import { inlinePlainText, parseInlines } from './inline-parser.js';
+import { isHeadingByModel, ruleSignalApplies } from './classifier.js';
 import type { FenceOpen } from './scanners.js';
 import type { Ctx } from './context.js';
 import { MAX_NESTING } from './context.js';
@@ -1122,7 +1123,7 @@ function emitParagraphAsSetext(para: Line[], depth: 1 | 2, underline: Line, ctx:
  * sentence stays a paragraph: the line must be entirely inside one delimiter
  * pair, be short, and not read as a sentence.
  */
-function boldHeadingText(para: Line[]): string | null {
+function boldHeadingText(para: Line[], mode: 'rule' | 'auto'): string | null {
   if (para.length !== 1) return null;
   const t = para[0]!.text.trim();
   const m = /^(\*\*\*|\*\*|__)(.+?)\1$/.exec(t);
@@ -1142,12 +1143,31 @@ function boldHeadingText(para: Line[]): string | null {
     inner.endsWith(':') ||
     /^(step|section|phase|stage|part|chapter|appendix|note|summary|overview|conclusion)\b/i.test(inner) ||
     isTitleCased(inner);
-  if (!labelLike) return null;
-  return inner;
+  if (labelLike) return inner;
+
+  // The rule above is blind outside ASCII-title-cased text: Chinese, Japanese,
+  // Korean and Arabic have no letter case at all, so it can never fire, and a
+  // section header in those scripts was silently demoted to a paragraph. Where
+  // its signal does not apply, defer to the classifier, which was fitted on
+  // real headings across scripts. Where the signal DOES apply the rule keeps
+  // the last word, because it is measurably more precise there.
+  if (mode !== 'rule' && !ruleSignalApplies(inner)) {
+    const decided = isHeadingByModel({
+      text: inner,
+      delimiter: m[1] as '**' | '__' | '***',
+      docUsesAtx: false,
+      siblingBoldLines: 0,
+      followedByBlank: true,
+      followedByParagraph: true,
+      relativePosition: 0,
+    });
+    if (decided === true) return inner;
+  }
+  return null;
 }
 
 function flushParagraph(para: Line[], ctx: Ctx, blocks: Block[]): void {
-  const bold = boldHeadingText(para);
+  const bold = boldHeadingText(para, ctx.options.headingDetection);
   if (bold !== null) {
     ctx.diag.repair('heading-missing-space', `Bold-only line "${bold.slice(0, 40)}" promoted to a heading`, para[0]!.lineNo);
     blocks.push({
