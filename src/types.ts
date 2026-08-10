@@ -323,6 +323,7 @@ export type DiagnosticCode =
   | 'heading-missing-space'
   | 'heading-depth-clamped'
   | 'setext-vs-break-ambiguity'
+  | 'bold-line-heading'
   // frontmatter
   | 'frontmatter-unclosed'
   // tables
@@ -403,6 +404,17 @@ export interface ParseOptions {
    * Default 'auto'.
    */
   headingDetection?: 'rule' | 'auto';
+  /**
+   * Promote a paragraph that is nothing but one bold line — `**Overview**` —
+   * to a heading. Default false.
+   *
+   * This is off by default because it is genuinely ambiguous: a bold line is
+   * as often deliberate emphasis (`**Warning: read this**`) as a heading a
+   * model forgot to mark with `#`. An audit of 3,090 real documents found it
+   * inventing ~3,956 headings, none of them clear wins. When on, it uses
+   * `headingDetection` to decide, so the multilingual classifier still applies.
+   */
+  promoteBoldHeadings?: boolean;
 }
 
 export interface ParseResult {

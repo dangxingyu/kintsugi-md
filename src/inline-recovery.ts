@@ -53,7 +53,12 @@ export function processEmphasis(toks: Tok[]): void {
     for (let k = c - 1; k >= 0; k--) {
       const cand = toks[k];
       if (cand === undefined || cand.kind !== 'delim') continue;
-      if (cand.seq <= bottom) break;
+      // Exclusive bound. A delimiter that failed AS A CLOSER (intraword `**`
+      // has canClose=true) must still be reachable as an OPENER for a later
+      // closer, or `a**b**c` never pairs — the dominant false positive on CJK
+      // text, where every character is "intraword". CommonMark sets
+      // openers_bottom to the element BEFORE the failed closer for this reason.
+      if (cand.seq < bottom) break;
       if (cand.char !== closer.char || !cand.canOpen || cand.count === 0) continue;
       // Rule of three.
       if (
@@ -469,6 +474,31 @@ export function recoverUnclosed(toks: Tok[], ctx: Ctx): void {
     // Real emphasis opens on a word. `*.py`, `*/glob`, `**/*.ts` and similar
     // path/glob fragments must stay literal.
     if (!d.nextIsWord) continue;
+
+    // Only recover DOUBLE delimiters (`**bold`, `__bold`). A lone unclosed
+    // `*` or `_` is, on real documents, overwhelmingly a C pointer
+    // (`char *argv`), a dereference (`*this`), multiplication, a glob, or a
+    // footnote marker — never intended italics. The audit found single-delimiter
+    // recovery was almost entirely false positives, while the `**Label:` bold
+    // pattern this exists for is always double.
+    if (d.origCount < 2) continue;
+
+    // Underscore identifiers are the biggest remaining false positive: a line
+    // like `__stdcall和__cdecl` or `__init__ and __repr__` leaves several `_`
+    // runs that never pair, and auto-closing the first one bolts the whole line
+    // into <strong>. One unpaired `_` run is a plausible unclosed `__bold`;
+    // more than one is snake_case / dunder / C identifiers, so leave them all
+    // literal. Asterisk emphasis is unaffected — that is the real "bold label"
+    // case LLMs produce.
+    if (d.char === '_') {
+      let otherUnderscoreRuns = 0;
+      for (let j = 0; j < toks.length; j++) {
+        if (j === i) continue;
+        const o = toks[j];
+        if (o !== undefined && o.kind === 'delim' && o.char === '_' && o.count > 0) otherUnderscoreRuns++;
+      }
+      if (otherUnderscoreRuns > 0) continue;
+    }
 
     // Extent: to the next line break or end of tokens.
     let extent = toks.length;

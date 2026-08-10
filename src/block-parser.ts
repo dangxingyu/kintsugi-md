@@ -333,6 +333,21 @@ function scanFence(lines: Line[], start: number, fence: FenceOpen, trackNesting:
 
   const openerLang = normalizeLang(fence.info);
 
+  // Positions of exact closers (same char, long enough, bare). Fuzzy closers —
+  // wrong char, short runs, trailing info — are only believed when NO exact
+  // closer exists further down. The audit showed why this matters: every one
+  // of 82 sampled fuzzy-closer firings on real READMEs was wrong. A '''
+  // docstring inside a ```python block was closing the block; a ```json line
+  // that OPENED the next block was consumed as this block's closer, inverting
+  // open/closed parity for the whole rest of the document.
+  const exactCloserExists = (from: number): boolean => {
+    for (let k = from; k < n; k++) {
+      const b = matchBareFence(lines[k]!.text);
+      if (b && b.char === fence.char && b.len >= fence.len) return true;
+    }
+    return false;
+  };
+
   for (let j = start + 1; j < n; j++) {
     const t = lines[j]!.text;
     const fl = matchFenceLine(t);
@@ -355,9 +370,17 @@ function scanFence(lines: Line[], start: number, fence: FenceOpen, trackNesting:
       }
 
       const sameChar = fl.char === fence.char;
+      const exact = sameChar && fl.info === '' && fl.len >= fence.len;
       // A closer may carry trailing text ("``` (end of query)") or repeat the
       // opener's language ("```python"); neither starts a new block here.
       const closerish = fl.info === '' || !looksLikeLanguage(fl.info) || normalizeLang(fl.info) === openerLang;
+
+      // Anything short of an exact closer is a repair, and repairs yield to
+      // the strict reading whenever the strict reading still has a closer.
+      if (!exact && exactCloserExists(j + (sameChar && fl.info === '' ? 1 : 0))) {
+        content.push(stripIndent(t, fence.indent));
+        continue;
+      }
 
       if (sameChar && closerish) {
         if (fl.info !== '') {
@@ -375,7 +398,7 @@ function scanFence(lines: Line[], start: number, fence: FenceOpen, trackNesting:
         }
         return { content, closed: true, end: j, usedNesting, mismatch };
       }
-      if (!sameChar && fl.info === '' && fl.len >= 3) {
+      if (!sameChar && fl.info === '' && fl.len >= 3 && fl.char !== "'" && fence.char !== "'") {
         mismatch = {
           code: 'fence-mismatched-char',
           message: `Closing fence uses '${fl.char}' but opener used '${fence.char}'; accepted as closer`,
@@ -749,25 +772,48 @@ function consumeHtmlBlock(
   }
 
   const raw = collected.join('\n');
-  const balanced = balanceHtml(raw);
-  if (balanced !== raw) {
-    ctx.diag.repair('html-escaped-unknown-tag', 'HTML block left tags open; appended the missing closing tags', lines[start]!.lineNo);
+
+  // Tags this block leaves open are NOT evidence of broken HTML. The dominant
+  // real-world pattern is a container split across blank lines:
+  //
+  //   <details>
+  //   <summary>…</summary>
+  //                       <- blank line ends the CommonMark block
+  //   markdown body…
+  //
+  //   </details>          <- the closer, blocks later
+  //
+  // An audit across 3,090 READMEs found the old per-block balancing appended a
+  // closer here 5,343 times with zero true positives — emptying every
+  // <details> on GitHub, breaking side-by-side <table> layouts, and revealing
+  // quiz answers the author deliberately hid. Only balance when the tag's
+  // closer appears NOWHERE later in the document; then it is genuinely
+  // unclosed and a sanitizer downstream would otherwise eat everything after.
+  const unclosed = openTagsOf(raw);
+  const trulyUnclosed = unclosed.filter((tag) => !closerAppearsLater(lines, j, tag));
+  if (trulyUnclosed.length > 0) {
+    ctx.diag.repair(
+      'html-escaped-unknown-tag',
+      `HTML ${trulyUnclosed.map((t) => '<' + t + '>').join(', ')} never closed anywhere below; appended the missing closing tags`,
+      lines[start]!.lineNo,
+    );
+    blocks.push({
+      type: 'htmlBlock',
+      value: raw + '\n' + trulyUnclosed.reverse().map((t) => `</${t}>`).join(''),
+      pos: { startLine: lines[start]!.lineNo, endLine: lines[Math.min(j, n) - 1]!.lineNo },
+    });
+    return j;
   }
   blocks.push({
     type: 'htmlBlock',
-    value: balanced,
+    value: raw,
     pos: { startLine: lines[start]!.lineNo, endLine: lines[Math.min(j, n) - 1]!.lineNo },
   });
   return j;
 }
 
-const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
-
-/**
- * Append closers for container tags the model left open, so downstream
- * sanitizers and DOM parsers do not swallow everything after the block.
- */
-function balanceHtml(html: string): string {
+/** Tags left open by this fragment, outermost first. */
+function openTagsOf(html: string): string[] {
   const open: string[] = [];
   const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*)?(\/?)>/g;
   let m: RegExpExecArray | null;
@@ -781,9 +827,43 @@ function balanceHtml(html: string): string {
     }
     open.push(tag);
   }
-  if (open.length === 0) return html;
-  return html + '\n' + open.reverse().map((t) => `</${t}>`).join('');
+  return open;
 }
+
+/** Does `</tag>` occur on any line at or after `from`? Memoized per document. */
+const closerIndexCache = new WeakMap<Line[], Map<string, number[]>>();
+function closerAppearsLater(lines: Line[], from: number, tag: string): boolean {
+  let index = closerIndexCache.get(lines);
+  if (index === undefined) {
+    index = new Map();
+    const re = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/g;
+    for (let k = 0; k < lines.length; k++) {
+      let m: RegExpExecArray | null;
+      re.lastIndex = 0;
+      while ((m = re.exec(lines[k]!.text)) !== null) {
+        const t = m[1]!.toLowerCase();
+        const list = index.get(t);
+        if (list === undefined) index.set(t, [k]);
+        else list.push(k);
+      }
+    }
+    closerIndexCache.set(lines, index);
+  }
+  const list = index.get(tag.toLowerCase());
+  if (list === undefined) return false;
+  // Binary search: first closer at or after `from`.
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid]! >= from) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo < list.length;
+}
+
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+
 
 function consumeIndentedChunk(lines: Line[], start: number, ctx: Ctx, blocks: Block[]): number {
   const { diag } = ctx;
@@ -1167,9 +1247,9 @@ function boldHeadingText(para: Line[], mode: 'rule' | 'auto'): string | null {
 }
 
 function flushParagraph(para: Line[], ctx: Ctx, blocks: Block[]): void {
-  const bold = boldHeadingText(para, ctx.options.headingDetection);
+  const bold = ctx.options.promoteBoldHeadings ? boldHeadingText(para, ctx.options.headingDetection) : null;
   if (bold !== null) {
-    ctx.diag.repair('heading-missing-space', `Bold-only line "${bold.slice(0, 40)}" promoted to a heading`, para[0]!.lineNo);
+    ctx.diag.repair('bold-line-heading', `Bold-only line "${bold.slice(0, 40)}" promoted to a heading`, para[0]!.lineNo);
     blocks.push({
       type: 'heading',
       depth: 3,

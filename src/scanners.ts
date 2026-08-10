@@ -251,7 +251,16 @@ export function matchMathBlockOpen(text: string): { delim: '$$' | '\\[' | 'env';
   let m = /^ {0,3}\$\$(.*)$/.exec(text);
   if (m) return { delim: '$$', rest: m[1]! };
   m = /^ {0,3}\\\[(.*)$/.exec(text);
-  if (m) return { delim: '\\[', rest: m[1]! };
+  if (m) {
+    // `\[` is also CommonMark's escape for a literal bracket, and in the wild
+    // that reading dominates (`\[!TIP]`, `\[[arxiv](url)\]` citations).
+    // Only open a math block when the line actually reads as TeX; otherwise
+    // let the inline layer render the escaped bracket.
+    const rest = m[1]!;
+    const looksLikeTex = rest.trim() === '' || /\\[a-zA-Z]|[\^_{}=]/.test(rest);
+    if (looksLikeTex) return { delim: '\\[', rest };
+    return null;
+  }
   const env = MATH_ENVIRONMENTS.exec(text);
   if (env) return { delim: 'env', rest: text.trim(), env: env[1]! };
   return null;

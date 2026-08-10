@@ -409,19 +409,29 @@ The model achieved 94% accuracy.`);
 // ---------------------------------------------------------------------------
 
 describe('headings: whole-line bold used as a section header', () => {
-  it('promotes a lone bold line to a heading so outlines can see the section', () => {
+  it('promotes a lone bold line to a heading when promoteBoldHeadings is on', () => {
     const src = fixture(`**Section 2: Results**
 
 Accuracy improved across all benchmarks.`);
-    const { html } = render(src);
+    const { html } = render(src, { promoteBoldHeadings: true });
     expect(html).toMatch(/<h[1-6]>Section 2: Results<\/h[1-6]>/);
+  });
+
+  it('GUARD: leaves that same bold line as emphasis by default (audit showed default-on invents headings)', () => {
+    const src = fixture(`**Section 2: Results**
+
+Accuracy improved across all benchmarks.`);
+    const { html, diagnostics } = render(src);
+    expect(html).toContain('<strong>Section 2: Results</strong>');
+    expect(html).not.toMatch(/<h[1-6]>/);
+    expect(diagnostics.filter((d) => d.severity === 'repair')).toEqual([]);
   });
 
   it('promotes a bold step header with a trailing colon, keeping the numbering cue', () => {
     const src = fixture(`**Step 3 — Deploy the service:**
 
 Run the deploy script with the staging flag.`);
-    const { html } = render(src);
+    const { html } = render(src, { promoteBoldHeadings: true });
     expect(html).toMatch(/<h[1-6]>Step 3 — Deploy the service:<\/h[1-6]>/);
     expect(html).toContain('<p>Run the deploy script with the staging flag.</p>');
   });
@@ -430,7 +440,7 @@ Run the deploy script with the staging flag.`);
     const src = fixture(`***Key Takeaways***
 
 Latency dominates the cost model.`);
-    const { ast } = parse(src);
+    const { ast } = parse(src, { promoteBoldHeadings: true });
     const headings = collect(ast, 'heading');
     expect(headings).toHaveLength(1);
     expect(textOf(headings[0]).trim()).toBe('Key Takeaways');

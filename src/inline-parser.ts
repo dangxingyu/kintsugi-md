@@ -162,6 +162,19 @@ function scan(s: string, startLine: number, ctx: Ctx): Tok[] {
       if (math && (next === '(' || next === '[')) {
         const closer = next === '(' ? '\\)' : '\\]';
         const end = s.indexOf(closer, pos + 2);
+        // `\[` is ALSO CommonMark's escape for a literal bracket, and on real
+        // documents that reading dominates: `\[!TIP]`, `\[[arxiv](url)\]`
+        // citation brackets, escaped checkboxes. Only take the math reading
+        // when the span actually looks like TeX — a backslash command, ^, _,
+        // or braces. An audit found every math-auto-closed firing on a README
+        // corpus was one of these escapes being eaten.
+        const span = end === -1 ? s.slice(pos + 2, lineEnd(pos)) : s.slice(pos + 2, end);
+        const looksLikeTex = /\\[a-zA-Z]|[\^_{}=]|\\d\s*[+\-*/]\s*\\d/.test(span);
+        if (!looksLikeTex) {
+          buf += next;
+          pos += 2;
+          continue;
+        }
         flush();
         if (end !== -1) {
           toks.push({ kind: 'node', node: { type: 'inlineMath', value: s.slice(pos + 2, end).trim() } });
@@ -963,7 +976,14 @@ function parseDestination(
         // "[text] (see note)" — prose parens, not a link.
         if (!urlish) return null;
       }
-      diag.repair('link-url-spaces', 'Link URL contains spaces; captured through the closing parenthesis', line);
+      // A trailing space before ")" renders identically to a well-formed
+      // link in every parser, so it is not worth a repair-level diagnostic —
+      // the audit found this firing 466 times, 24/25 of them on that harmless
+      // trailing-space case. Only an INTERIOR space is a real deviation (a
+      // strict parser would truncate the URL there).
+      if (/\S\s+\S/.test(url)) {
+        diag.repair('link-url-spaces', 'Link URL contains an interior space; captured the whole URL', line);
+      }
     }
     return { url, title, end: j + 1 };
   }

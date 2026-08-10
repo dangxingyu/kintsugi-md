@@ -15,6 +15,7 @@ const DEFAULTS: Required<ParseOptions> = {
   frontmatter: true,
   inlineRecovery: 'auto',
   headingDetection: 'auto',
+  promoteBoldHeadings: false,
 };
 
 /**

@@ -15,7 +15,7 @@ import { MODEL_INFO, explain, headingProbability, ruleSignalApplies } from '../s
  * precise there.
  */
 
-const isHeading = (src: string) => /<h[1-6]>/.test(render(src).html);
+const isHeading = (src: string) => /<h[1-6]>/.test(render(src, { promoteBoldHeadings: true }).html);
 const doc = (bold: string) => `${bold}\n\n${'Some following body text.'}`;
 
 describe('heading classifier: scripts the rule could never handle', () => {
@@ -71,7 +71,7 @@ describe('heading classifier: English behaviour is unchanged', () => {
   });
 
   it('reports no repair when nothing was promoted', () => {
-    const { diagnostics } = parse('Deploy at 09:00.\n\n**Never deploy on a Friday**\n\nRollbacks take ten minutes.');
+    const { diagnostics } = parse('Deploy at 09:00.\n\n**Never deploy on a Friday**\n\nRollbacks take ten minutes.', { promoteBoldHeadings: true });
     expect(diagnostics.filter((d) => d.severity === 'repair')).toEqual([]);
   });
 });
@@ -95,8 +95,8 @@ describe('heading classifier: routing', () => {
 
   it('can be turned off entirely, restoring rule-only behaviour', () => {
     const src = doc('**实验结果**');
-    expect(/<h[1-6]>/.test(render(src, { headingDetection: 'rule' }).html)).toBe(false);
-    expect(/<h[1-6]>/.test(render(src, { headingDetection: 'auto' }).html)).toBe(true);
+    expect(/<h[1-6]>/.test(render(src, { promoteBoldHeadings: true, headingDetection: 'rule' }).html)).toBe(false);
+    expect(/<h[1-6]>/.test(render(src, { promoteBoldHeadings: true, headingDetection: 'auto' }).html)).toBe(true);
   });
 });
 

@@ -346,8 +346,17 @@ function matchMathBlockOpen(text) {
     if (m)
         return { delim: '$$', rest: m[1] };
     m = /^ {0,3}\\\[(.*)$/.exec(text);
-    if (m)
-        return { delim: '\\[', rest: m[1] };
+    if (m) {
+        // `\[` is also CommonMark's escape for a literal bracket, and in the wild
+        // that reading dominates (`\[!TIP]`, `\[[arxiv](url)\]` citations).
+        // Only open a math block when the line actually reads as TeX; otherwise
+        // let the inline layer render the escaped bracket.
+        const rest = m[1];
+        const looksLikeTex = rest.trim() === '' || /\\[a-zA-Z]|[\^_{}=]/.test(rest);
+        if (looksLikeTex)
+            return { delim: '\\[', rest };
+        return null;
+    }
     const env = MATH_ENVIRONMENTS.exec(text);
     if (env)
         return { delim: 'env', rest: text.trim(), env: env[1] };
@@ -506,7 +515,17 @@ function collectRefs(lines, ctx) {
 // ===== inline-tokens =====
 const text = (value) => ({ kind: 'node', node: { type: 'text', value } });
 const isWs = (ch) => ch === undefined || /\s/.test(ch);
-const isPunct = (ch) => ch !== undefined && /[!-/:-@[-`{-~\u00A1-\u00BF\u2000-\u206F]/.test(ch);
+/**
+ * Punctuation for CommonMark's flanking rules — Unicode-wide, not ASCII.
+ *
+ * The ASCII-only version cost dearly on real documents: a closing `**`
+ * followed by 。 or ， failed the right-flanking test, the pair never matched,
+ * and the "unclosed emphasis" recovery then bolted the rest of the line into
+ * <strong>. An audit measured 1,284 such firings on 3,090 READMEs — all false,
+ * concentrated in Chinese and Japanese text. \p{P} and \p{S} match what the
+ * CommonMark spec actually says (Unicode punctuation and symbols).
+ */
+const isPunct = (ch) => ch !== undefined && /[\p{P}\p{S}]/u.test(ch);
 function isBreakTok(t) {
     return t.kind === 'node' && (t.node.type === 'softBreak' || t.node.type === 'hardBreak');
 }
@@ -656,7 +675,12 @@ function processEmphasis(toks) {
             const cand = toks[k];
             if (cand === undefined || cand.kind !== 'delim')
                 continue;
-            if (cand.seq <= bottom)
+            // Exclusive bound. A delimiter that failed AS A CLOSER (intraword `**`
+            // has canClose=true) must still be reachable as an OPENER for a later
+            // closer, or `a**b**c` never pairs — the dominant false positive on CJK
+            // text, where every character is "intraword". CommonMark sets
+            // openers_bottom to the element BEFORE the failed closer for this reason.
+            if (cand.seq < bottom)
                 break;
             if (cand.char !== closer.char || !cand.canOpen || cand.count === 0)
                 continue;
@@ -1076,6 +1100,33 @@ function recoverUnclosed(toks, ctx) {
         // path/glob fragments must stay literal.
         if (!d.nextIsWord)
             continue;
+        // Only recover DOUBLE delimiters (`**bold`, `__bold`). A lone unclosed
+        // `*` or `_` is, on real documents, overwhelmingly a C pointer
+        // (`char *argv`), a dereference (`*this`), multiplication, a glob, or a
+        // footnote marker — never intended italics. The audit found single-delimiter
+        // recovery was almost entirely false positives, while the `**Label:` bold
+        // pattern this exists for is always double.
+        if (d.origCount < 2)
+            continue;
+        // Underscore identifiers are the biggest remaining false positive: a line
+        // like `__stdcall和__cdecl` or `__init__ and __repr__` leaves several `_`
+        // runs that never pair, and auto-closing the first one bolts the whole line
+        // into <strong>. One unpaired `_` run is a plausible unclosed `__bold`;
+        // more than one is snake_case / dunder / C identifiers, so leave them all
+        // literal. Asterisk emphasis is unaffected — that is the real "bold label"
+        // case LLMs produce.
+        if (d.char === '_') {
+            let otherUnderscoreRuns = 0;
+            for (let j = 0; j < toks.length; j++) {
+                if (j === i)
+                    continue;
+                const o = toks[j];
+                if (o !== undefined && o.kind === 'delim' && o.char === '_' && o.count > 0)
+                    otherUnderscoreRuns++;
+            }
+            if (otherUnderscoreRuns > 0)
+                continue;
+        }
         // Extent: to the next line break or end of tokens.
         let extent = toks.length;
         for (let j = i + 1; j < toks.length; j++) {
@@ -1494,6 +1545,19 @@ function scan(s, startLine, ctx) {
             if (math && (next === '(' || next === '[')) {
                 const closer = next === '(' ? '\\)' : '\\]';
                 const end = s.indexOf(closer, pos + 2);
+                // `\[` is ALSO CommonMark's escape for a literal bracket, and on real
+                // documents that reading dominates: `\[!TIP]`, `\[[arxiv](url)\]`
+                // citation brackets, escaped checkboxes. Only take the math reading
+                // when the span actually looks like TeX — a backslash command, ^, _,
+                // or braces. An audit found every math-auto-closed firing on a README
+                // corpus was one of these escapes being eaten.
+                const span = end === -1 ? s.slice(pos + 2, lineEnd(pos)) : s.slice(pos + 2, end);
+                const looksLikeTex = /\\[a-zA-Z]|[\^_{}=]|\\d\s*[+\-*/]\s*\\d/.test(span);
+                if (!looksLikeTex) {
+                    buf += next;
+                    pos += 2;
+                    continue;
+                }
                 flush();
                 if (end !== -1) {
                     toks.push({ kind: 'node', node: { type: 'inlineMath', value: s.slice(pos + 2, end).trim() } });
@@ -2263,7 +2327,14 @@ function parseDestination(s, parenPos, line, ctx, requireUrlish) {
                 if (!urlish)
                     return null;
             }
-            diag.repair('link-url-spaces', 'Link URL contains spaces; captured through the closing parenthesis', line);
+            // A trailing space before ")" renders identically to a well-formed
+            // link in every parser, so it is not worth a repair-level diagnostic —
+            // the audit found this firing 466 times, 24/25 of them on that harmless
+            // trailing-space case. Only an INTERIOR space is a real deviation (a
+            // strict parser would truncate the URL there).
+            if (/\S\s+\S/.test(url)) {
+                diag.repair('link-url-spaces', 'Link URL contains an interior space; captured the whole URL', line);
+            }
         }
         return { url, title, end: j + 1 };
     }
@@ -3571,6 +3642,21 @@ function scanFence(lines, start, fence, trackNesting) {
     let usedNesting = false;
     let mismatch = null;
     const openerLang = normalizeLang(fence.info);
+    // Positions of exact closers (same char, long enough, bare). Fuzzy closers —
+    // wrong char, short runs, trailing info — are only believed when NO exact
+    // closer exists further down. The audit showed why this matters: every one
+    // of 82 sampled fuzzy-closer firings on real READMEs was wrong. A '''
+    // docstring inside a ```python block was closing the block; a ```json line
+    // that OPENED the next block was consumed as this block's closer, inverting
+    // open/closed parity for the whole rest of the document.
+    const exactCloserExists = (from) => {
+        for (let k = from; k < n; k++) {
+            const b = matchBareFence(lines[k].text);
+            if (b && b.char === fence.char && b.len >= fence.len)
+                return true;
+        }
+        return false;
+    };
     for (let j = start + 1; j < n; j++) {
         const t = lines[j].text;
         const fl = matchFenceLine(t);
@@ -3591,9 +3677,16 @@ function scanFence(lines, start, fence, trackNesting) {
                 continue;
             }
             const sameChar = fl.char === fence.char;
+            const exact = sameChar && fl.info === '' && fl.len >= fence.len;
             // A closer may carry trailing text ("``` (end of query)") or repeat the
             // opener's language ("```python"); neither starts a new block here.
             const closerish = fl.info === '' || !looksLikeLanguage(fl.info) || normalizeLang(fl.info) === openerLang;
+            // Anything short of an exact closer is a repair, and repairs yield to
+            // the strict reading whenever the strict reading still has a closer.
+            if (!exact && exactCloserExists(j + (sameChar && fl.info === '' ? 1 : 0))) {
+                content.push(stripIndent(t, fence.indent));
+                continue;
+            }
             if (sameChar && closerish) {
                 if (fl.info !== '') {
                     mismatch = {
@@ -3611,7 +3704,7 @@ function scanFence(lines, start, fence, trackNesting) {
                 }
                 return { content, closed: true, end: j, usedNesting, mismatch };
             }
-            if (!sameChar && fl.info === '' && fl.len >= 3) {
+            if (!sameChar && fl.info === '' && fl.len >= 3 && fl.char !== "'" && fence.char !== "'") {
                 mismatch = {
                     code: 'fence-mismatched-char',
                     message: `Closing fence uses '${fl.char}' but opener used '${fence.char}'; accepted as closer`,
@@ -3956,23 +4049,42 @@ function consumeHtmlBlock(lines, start, info, ctx, blocks) {
         }
     }
     const raw = collected.join('\n');
-    const balanced = balanceHtml(raw);
-    if (balanced !== raw) {
-        ctx.diag.repair('html-escaped-unknown-tag', 'HTML block left tags open; appended the missing closing tags', lines[start].lineNo);
+    // Tags this block leaves open are NOT evidence of broken HTML. The dominant
+    // real-world pattern is a container split across blank lines:
+    //
+    //   <details>
+    //   <summary>…</summary>
+    //                       <- blank line ends the CommonMark block
+    //   markdown body…
+    //
+    //   </details>          <- the closer, blocks later
+    //
+    // An audit across 3,090 READMEs found the old per-block balancing appended a
+    // closer here 5,343 times with zero true positives — emptying every
+    // <details> on GitHub, breaking side-by-side <table> layouts, and revealing
+    // quiz answers the author deliberately hid. Only balance when the tag's
+    // closer appears NOWHERE later in the document; then it is genuinely
+    // unclosed and a sanitizer downstream would otherwise eat everything after.
+    const unclosed = openTagsOf(raw);
+    const trulyUnclosed = unclosed.filter((tag) => !closerAppearsLater(lines, j, tag));
+    if (trulyUnclosed.length > 0) {
+        ctx.diag.repair('html-escaped-unknown-tag', `HTML ${trulyUnclosed.map((t) => '<' + t + '>').join(', ')} never closed anywhere below; appended the missing closing tags`, lines[start].lineNo);
+        blocks.push({
+            type: 'htmlBlock',
+            value: raw + '\n' + trulyUnclosed.reverse().map((t) => `</${t}>`).join(''),
+            pos: { startLine: lines[start].lineNo, endLine: lines[Math.min(j, n) - 1].lineNo },
+        });
+        return j;
     }
     blocks.push({
         type: 'htmlBlock',
-        value: balanced,
+        value: raw,
         pos: { startLine: lines[start].lineNo, endLine: lines[Math.min(j, n) - 1].lineNo },
     });
     return j;
 }
-const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
-/**
- * Append closers for container tags the model left open, so downstream
- * sanitizers and DOM parsers do not swallow everything after the block.
- */
-function balanceHtml(html) {
+/** Tags left open by this fragment, outermost first. */
+function openTagsOf(html) {
     const open = [];
     const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*)?(\/?)>/g;
     let m;
@@ -3988,10 +4100,45 @@ function balanceHtml(html) {
         }
         open.push(tag);
     }
-    if (open.length === 0)
-        return html;
-    return html + '\n' + open.reverse().map((t) => `</${t}>`).join('');
+    return open;
 }
+/** Does `</tag>` occur on any line at or after `from`? Memoized per document. */
+const closerIndexCache = new WeakMap();
+function closerAppearsLater(lines, from, tag) {
+    let index = closerIndexCache.get(lines);
+    if (index === undefined) {
+        index = new Map();
+        const re = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/g;
+        for (let k = 0; k < lines.length; k++) {
+            let m;
+            re.lastIndex = 0;
+            while ((m = re.exec(lines[k].text)) !== null) {
+                const t = m[1].toLowerCase();
+                const list = index.get(t);
+                if (list === undefined)
+                    index.set(t, [k]);
+                else
+                    list.push(k);
+            }
+        }
+        closerIndexCache.set(lines, index);
+    }
+    const list = index.get(tag.toLowerCase());
+    if (list === undefined)
+        return false;
+    // Binary search: first closer at or after `from`.
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (list[mid] >= from)
+            hi = mid;
+        else
+            lo = mid + 1;
+    }
+    return lo < list.length;
+}
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 function consumeIndentedChunk(lines, start, ctx, blocks) {
     const { diag } = ctx;
     const n = lines.length;
@@ -4361,9 +4508,9 @@ function boldHeadingText(para, mode) {
     return null;
 }
 function flushParagraph(para, ctx, blocks) {
-    const bold = boldHeadingText(para, ctx.options.headingDetection);
+    const bold = ctx.options.promoteBoldHeadings ? boldHeadingText(para, ctx.options.headingDetection) : null;
     if (bold !== null) {
-        ctx.diag.repair('heading-missing-space', `Bold-only line "${bold.slice(0, 40)}" promoted to a heading`, para[0].lineNo);
+        ctx.diag.repair('bold-line-heading', `Bold-only line "${bold.slice(0, 40)}" promoted to a heading`, para[0].lineNo);
         blocks.push({
             type: 'heading',
             depth: 3,
@@ -4605,6 +4752,7 @@ const DEFAULTS = {
     frontmatter: true,
     inlineRecovery: 'auto',
     headingDetection: 'auto',
+    promoteBoldHeadings: false,
 };
 /**
  * Parse markdown. Never throws: any input yields a Document plus the list of

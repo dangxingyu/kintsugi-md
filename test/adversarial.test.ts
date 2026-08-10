@@ -135,9 +135,12 @@ describe('adversarial: valid markdown is left alone', () => {
     expect(repairs(src)).toEqual([]);
   });
 
-  it('still promotes a label-like bold line to a heading', () => {
-    expect(render('**Section 2: Results**\n\nAccuracy improved.').html).toMatch(/<h[1-6]>Section 2: Results<\/h[1-6]>/);
-    expect(render('**Step 3 — Deploy the service:**\n\nRun it.').html).toMatch(/<h[1-6]>Step 3/);
+  it('promotes a label-like bold line to a heading only when asked (default off)', () => {
+    // Default off: the audit showed default-on invents ~4,000 headings on real docs.
+    expect(render('**Section 2: Results**\n\nAccuracy improved.').html).not.toMatch(/<h[1-6]>/);
+    // Opt in and it works.
+    expect(render('**Section 2: Results**\n\nAccuracy improved.', { promoteBoldHeadings: true }).html).toMatch(/<h[1-6]>Section 2: Results<\/h[1-6]>/);
+    expect(render('**Step 3 — Deploy the service:**\n\nRun it.', { promoteBoldHeadings: true }).html).toMatch(/<h[1-6]>Step 3/);
   });
 });
 
