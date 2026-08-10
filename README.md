@@ -84,6 +84,8 @@ const { html, diagnostics } = render(source, options); // both in one call
 | `math` | `true` | Recognize `$…$`, `$$…$$`, `\(…\)`, `\[…\]` as math nodes |
 | `frontmatter` | `true` | Recognize `---` YAML frontmatter at the top of the document |
 | `inlineRecovery` | `'auto'` | `'auto'` repairs unclosed inline delimiters; `'strict'` literalizes them CommonMark-style |
+| `headingDetection` | `'auto'` | How a bold line is judged to be a heading: `'auto'` uses the multilingual classifier where the rule is blind; `'rule'` disables it |
+| `promoteBoldHeadings` | `false` | Whether a lone bold line (`**Overview**`) may become a heading at all. Off by default — see note below |
 
 ### `RenderOptions`
 
@@ -93,6 +95,14 @@ const { html, diagnostics } = render(source, options); // both in one call
 | `allowHtml` | `true` | Emit raw HTML blocks as-is; when `false` they are escaped |
 | `showFrontmatter` | `false` | Render frontmatter as a `<pre>` block instead of dropping it |
 | `showScaffolding` | `false` | Render leaked `<thinking>` blocks and chat control tokens (always present in the AST regardless) |
+
+> **On `promoteBoldHeadings`:** a lone bold line like `**Overview**` is as often
+> deliberate emphasis (`**Warning: read this**`) as a heading a model forgot to
+> mark with `#`. An audit of 3,090 real documents found default-on promotion
+> invented roughly 4,000 headings with no clear wins, so it is off by default.
+> Turn it on if your input is known to use bold as a heading substitute; the
+> multilingual classifier then decides, so it works in Chinese, Japanese and
+> Korean as well as English.
 
 ### Diagnostics
 

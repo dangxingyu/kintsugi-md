@@ -471,34 +471,7 @@ export function recoverUnclosed(toks: Tok[], ctx: Ctx): void {
   for (let i = 0; i < toks.length; i++) {
     const d = toks[i];
     if (d === undefined || d.kind !== 'delim' || d.char === '~' || !d.canOpen || d.count === 0) continue;
-    // Real emphasis opens on a word. `*.py`, `*/glob`, `**/*.ts` and similar
-    // path/glob fragments must stay literal.
-    if (!d.nextIsWord) continue;
-
-    // Only recover DOUBLE delimiters (`**bold`, `__bold`). A lone unclosed
-    // `*` or `_` is, on real documents, overwhelmingly a C pointer
-    // (`char *argv`), a dereference (`*this`), multiplication, a glob, or a
-    // footnote marker — never intended italics. The audit found single-delimiter
-    // recovery was almost entirely false positives, while the `**Label:` bold
-    // pattern this exists for is always double.
-    if (d.origCount < 2) continue;
-
-    // Underscore identifiers are the biggest remaining false positive: a line
-    // like `__stdcall和__cdecl` or `__init__ and __repr__` leaves several `_`
-    // runs that never pair, and auto-closing the first one bolts the whole line
-    // into <strong>. One unpaired `_` run is a plausible unclosed `__bold`;
-    // more than one is snake_case / dunder / C identifiers, so leave them all
-    // literal. Asterisk emphasis is unaffected — that is the real "bold label"
-    // case LLMs produce.
-    if (d.char === '_') {
-      let otherUnderscoreRuns = 0;
-      for (let j = 0; j < toks.length; j++) {
-        if (j === i) continue;
-        const o = toks[j];
-        if (o !== undefined && o.kind === 'delim' && o.char === '_' && o.count > 0) otherUnderscoreRuns++;
-      }
-      if (otherUnderscoreRuns > 0) continue;
-    }
+    if (d.origCount < 2) continue; // only ** / __ — see the fallback guards below
 
     // Extent: to the next line break or end of tokens.
     let extent = toks.length;
@@ -509,6 +482,68 @@ export function recoverUnclosed(toks: Tok[], ctx: Ctx): void {
       }
     }
     if (extent === i + 1) continue; // nothing to wrap
+
+    // Before assuming the delimiter was never closed, look for an unconsumed
+    // run of the same shape on this line — the author almost certainly wrote
+    // the closer and CommonMark's flanking rules simply refused it.
+    //
+    // This is the CJK case, and it is the single clearest place Kintsugi beats
+    // a strict parser. `**注意：**本项目` has punctuation before the closing
+    // `**` and a letter after it, which fails right-flanking, so CommonMark
+    // (and GitHub) render the asterisks literally. Korean `**[link](url)**를`
+    // fails the same way. Pairing with the real closer yields
+    // `<strong>注意：</strong>本项目`; closing at end of line instead produced
+    // `<strong>注意：**本项目</strong>`, which was worse than doing nothing.
+    // Underscores are excluded from partner matching: `__stdcall和__cdecl` and
+    // `__init__ and __repr__` present exactly this shape — two unconsumed `__`
+    // runs on one line — but are identifiers, not emphasis. Asterisks carry no
+    // such ambiguity, and the CJK cases this recovers are all `**`.
+    let partner = -1;
+    if (d.char !== '_') {
+      for (let j = i + 1; j < extent; j++) {
+        const cand = toks[j];
+        if (cand === undefined || cand.kind !== 'delim') continue;
+        if (cand.char !== d.char || cand.count !== d.count) continue;
+        partner = j;
+        break;
+      }
+    }
+    if (partner !== -1) {
+      const inner = toks.slice(i + 1, partner);
+      const children = assemble(inner);
+      if (children.length > 0) {
+        const node: Inline = d.count >= 2 ? { type: 'strong', children } : { type: 'emphasis', children };
+        ctx.diag.repair(
+          'emphasis-auto-closed',
+          `'${d.char.repeat(d.origCount)}' pair rejected by flanking rules (punctuation adjacency); matched them anyway`,
+          d.line,
+        );
+        toks.splice(i, partner - i + 1, { kind: 'node', node });
+        continue;
+      }
+    }
+
+    // ---- fallback: no partner, so the delimiter really is unclosed ----
+    //
+    // These guards only apply here. With a partner present the evidence is
+    // strong enough to ignore them; without one we are guessing, and on real
+    // documents the guesses were nearly always wrong.
+
+    // Real emphasis opens on a word. `*.py`, `*/glob`, `**/*.ts` stay literal.
+    if (!d.nextIsWord) continue;
+
+    // Underscore identifiers: `__stdcall和__cdecl`, `__init__ and __repr__`
+    // leave several `_` runs that never pair. One unpaired run is a plausible
+    // unclosed `__bold`; more than one is snake_case, so leave them all alone.
+    if (d.char === '_') {
+      let otherUnderscoreRuns = 0;
+      for (let j = 0; j < toks.length; j++) {
+        if (j === i) continue;
+        const o = toks[j];
+        if (o !== undefined && o.kind === 'delim' && o.char === '_' && o.count > 0) otherUnderscoreRuns++;
+      }
+      if (otherUnderscoreRuns > 0) continue;
+    }
 
     // Label heuristic: opener starts the block/line and a colon appears early.
     let closeAt = extent;

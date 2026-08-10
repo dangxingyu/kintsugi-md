@@ -65,6 +65,36 @@ describe('cluster 2a: emphasis next to CJK punctuation', () => {
   });
 });
 
+describe('cluster 2c: bold that CommonMark flanking rejects on CJK/Korean', () => {
+  // CommonMark's flanking rules are Latin-centric: a closing `**` preceded by
+  // punctuation and followed by a letter is refused. In Chinese, Japanese and
+  // Korean that shape is completely ordinary, so GitHub renders these as
+  // literal asterisks. Pairing them anyway is the clearest case where this
+  // parser should beat a strict one.
+  const cases: Array<[string, string, string]> = [
+    ['fullwidth colon label', '**注意：**本项目不支持', '<strong>注意：</strong>'],
+    ['fullwidth colon 2', '**修复：**收敛边界', '<strong>修复：</strong>'],
+    ['fullwidth parens', '**捆绑包（bundle）**将一组', '<strong>捆绑包（bundle）</strong>'],
+    ['link then CJK', '**[DRCD](https://x.com)**由台湾发布', '</a></strong>由台湾'],
+    ['link then Korean', '기여를 **[C](C.md)**를 참고하세요.', '</a></strong>를'],
+  ];
+  for (const [name, src, expected] of cases) {
+    it(`pairs ${name}`, () => {
+      const { html } = render(src);
+      expect(html).toContain(expected);
+      expect(html).not.toContain('**');
+    });
+  }
+
+  it('does not pair underscores, which are identifiers at this shape', () => {
+    expect(render('The __stdcall和__cdecl thing').html).toContain('__stdcall和__cdecl');
+  });
+
+  it('does not pair a glob that has no real partner', () => {
+    expect(render('Match **/*.ts here').html).toContain('**/*.ts');
+  });
+});
+
 describe('cluster 2b: escaped brackets are not eaten as LaTeX', () => {
   it('renders \\[!TIP] as a literal bracket, not math', () => {
     const { html } = render('\\[!TIP]\nUse this feature.');
