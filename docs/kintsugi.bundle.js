@@ -424,27 +424,6 @@ function indexHtmlClosers(lines) {
     }
     return index;
 }
-/** Does this document use ATX headings as its heading convention? */
-function detectAtxStyle(lines) {
-    let atx = 0;
-    let inFence = null;
-    for (const line of lines) {
-        if (inFence) {
-            const bare = matchBareFence(line.text);
-            if (bare && bare.char === inFence.char && bare.len >= inFence.len)
-                inFence = null;
-            continue;
-        }
-        const open = matchFenceOpen(line.text);
-        if (open) {
-            inFence = open;
-            continue;
-        }
-        if (/^ {0,3}#{1,6} +\S/.test(line.text))
-            atx++;
-    }
-    return atx >= 2;
-}
 /**
  * Pre-scan for link reference definitions (`[label]: url "title"`).
  * Done as a separate pass so forward references resolve — LLMs frequently put
@@ -1244,12 +1223,19 @@ const STANDARD_SEPARATOR_CELL = /^:?-+:?$/;
 /**
  * Normalize unicode table drawing into ASCII pipes so box-drawing and
  * fullwidth-pipe tables parse like ordinary ones.
+ *
+ * A line uses exactly one delimiter character, and ASCII `|` wins whenever it
+ * is present. `｜` and `│` are ordinary punctuation in Chinese and Japanese
+ * ("清醒FM｜Gen Z 迷茫图鉴") and decoration in link lists ("[A](x) │ [B](y)"),
+ * so promoting them to delimiters inside a row that already has real pipes
+ * splits cells the author never split — which then cascades into a widened
+ * table, a padded separator and a ragged final row. Only a line with no ASCII
+ * pipe at all can be delimited by a lookalike.
  */
 function normalizePipes(text) {
-    const out = text
-        .replace(PIPE_LOOKALIKES, '|')
-        .replace(BOX_JUNCTIONS, '|')
-        .replace(BOX_CORNERS, '|');
+    const out = text.includes('|')
+        ? text
+        : text.replace(PIPE_LOOKALIKES, '|').replace(BOX_JUNCTIONS, '|').replace(BOX_CORNERS, '|');
     // Only a whole-line `+---+---+` border counts; a lone `+` is arithmetic.
     return ASCII_BORDER.test(out.trim()) ? out.replace(/\+/g, '|') : out;
 }
@@ -2574,22 +2560,27 @@ function matchListMarker(text) {
         };
     }
     // Markers with no space at all: `-Item`, `*Item`, `1.Install`. Only believed
-    // as part of a run (needsSibling), and only before a letter so that `-5`,
-    // `--flag` and `3.14` stay text.
-    m = /^( {0,5})([-*+])([A-Za-zÀ-ɏ一-鿿][^\n]*)$/.exec(text);
+    // as part of a run (needsSibling), and only before a letter or a code span
+    // so that `-5`, `--flag` and `3.14` stay text. A run written ``1.`--flag`
+    // does a thing`` is common in options docs, and rejecting the backtick split
+    // it into a stranded paragraph plus an <ol start="2">.
+    m = /^( {0,5})([-*+])([A-Za-zÀ-ɏ一-鿿`][^\n]*)$/.exec(text);
     if (m) {
         const indent = m[1].length;
         const ch = m[2];
         const rest = m[3];
-        // `*Item*` is emphasis, not a bullet.
-        if (ch === '*' && /\*\s*$/.test(rest))
+        // `*Item*` is emphasis, not a bullet — and so is `*Note*: the rest of the
+        // sentence`, where the closing delimiter is mid-line rather than at the
+        // end. Reading that as a bullet ate the opening `*` and left the closing
+        // one stranded in the text.
+        if (ch === '*' && rest.includes('*'))
             return null;
         return {
             ...base, indent, ordered: false, bulletChar: ch, num: 0,
             contentIndent: indent + 1, rest, style: 'bullet', missingSpace: true,
         };
     }
-    m = /^( {0,5})(\d{1,9})([.)])([A-Za-zÀ-ɏ一-鿿][^\n]*)$/.exec(text);
+    m = /^( {0,5})(\d{1,9})([.)])([A-Za-zÀ-ɏ一-鿿`][^\n]*)$/.exec(text);
     if (m) {
         const indent = m[1].length;
         const digits = m[2];
@@ -2742,11 +2733,53 @@ function consumeList(lines, start, first, ctx, blocks) {
                     itemLines.push(...pendingBlanks);
                     pendingBlanks = [];
                 }
+                let absorbFence = null;
+                let runIndent = null;
+                let runEnd = j;
                 for (let p = j; p < resume; p++) {
                     const src = lines[p];
-                    // A bare command line becomes a code block inside the item; fences
-                    // and blanks carry through as they are.
-                    itemLines.push(looksLikeCommand(src.text) ? { text: '    ' + src.text.trim(), lineNo: src.lineNo } : src);
+                    // Fenced content is never rewritten. `looksLikeCommand` was being
+                    // asked line by line with no idea it was inside a fence, so it
+                    // indented `cd LightRAG` and left `uv sync` at column 0 within the
+                    // same block — shredding the code it was trying to attach.
+                    if (absorbFence !== null) {
+                        const bare = matchBareFence(src.text);
+                        if (bare && bare.char === absorbFence.char && bare.len >= absorbFence.len)
+                            absorbFence = null;
+                        itemLines.push(src);
+                        continue;
+                    }
+                    const opensFence = matchFenceOpen(src.text);
+                    if (opensFence) {
+                        absorbFence = opensFence;
+                        runIndent = null;
+                        itemLines.push(src);
+                        continue;
+                    }
+                    if (isBlank(src.text)) {
+                        runIndent = null;
+                        itemLines.push(src);
+                        continue;
+                    }
+                    // Only a BARE command line becomes an indented code block, and the
+                    // whole contiguous run goes together. Deciding line by line split a
+                    // two-line shell block across two indent levels, because a long
+                    // `git remote set-url …` fails the word-count test that the
+                    // `git checkout -b dev` under it passes.
+                    if (runIndent === null) {
+                        let end = p;
+                        let anyCommand = false;
+                        while (end < resume && !isBlank(lines[end].text) && matchFenceOpen(lines[end].text) === null) {
+                            if (looksLikeCommand(lines[end].text))
+                                anyCommand = true;
+                            end++;
+                        }
+                        runIndent = anyCommand;
+                        runEnd = end;
+                    }
+                    itemLines.push(runIndent ? { text: '    ' + src.text.trim(), lineNo: src.lineNo } : src);
+                    if (p + 1 >= runEnd)
+                        runIndent = null;
                 }
                 itemEndLine = lines[resume - 1].lineNo;
                 j = resume;
@@ -2833,10 +2866,66 @@ function consumeList(lines, start, first, ctx, blocks) {
  * level; a gap of two or more starts a real level. Continuation lines shift
  * with the marker they follow.
  */
+/**
+ * Which lines sit inside a fenced code block (including the fence lines).
+ * Anything in here is content, never structure: a JSDoc ` * ` continuation
+ * inside a ```` ```ts ```` block is not a list marker, and reading it as one
+ * made the indent normalizer restripe the comment and break its alignment.
+ */
+function fencedLines(lines) {
+    const mask = new Array(lines.length).fill(false);
+    let open = null;
+    for (let i = 0; i < lines.length; i++) {
+        const t = lines[i].text;
+        if (open !== null) {
+            mask[i] = true;
+            const bare = matchBareFence(t);
+            if (bare && bare.char === open.char && bare.len >= open.len)
+                open = null;
+            continue;
+        }
+        const started = matchFenceOpen(t);
+        if (started) {
+            open = started;
+            mask[i] = true;
+        }
+    }
+    return mask;
+}
+/**
+ * Effective indent to shift each line by: its own, except inside a fence,
+ * where every line in the run shares the run's shallowest indent so the block
+ * moves rigidly and the code keeps its shape.
+ */
+function regionIndent(lines, fenced) {
+    const out = lines.map((l) => indentOf(l.text));
+    let i = 0;
+    while (i < lines.length) {
+        if (!fenced[i]) {
+            i++;
+            continue;
+        }
+        let j = i;
+        let min = Number.POSITIVE_INFINITY;
+        while (j < lines.length && fenced[j]) {
+            if (!isBlank(lines[j].text))
+                min = Math.min(min, indentOf(lines[j].text));
+            j++;
+        }
+        if (!Number.isFinite(min))
+            min = 0;
+        for (let k = i; k < j; k++)
+            out[k] = min;
+        i = j;
+    }
+    return out;
+}
 function normalizeIndents(lines) {
+    const fenced = fencedLines(lines);
     const indents = new Set();
-    for (const l of lines) {
-        if (isBlank(l.text))
+    for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (isBlank(l.text) || fenced[i])
             continue;
         if (matchListMarker(l.text))
             indents.add(indentOf(l.text));
@@ -2845,9 +2934,13 @@ function normalizeIndents(lines) {
         return { lines, adjusted: false };
     // Pull a uniformly over-indented run of markers back to the left margin.
     // Without this a nested list written at seven spaces reads as indented code.
+    // Inside a fence every line must move by the SAME amount or the code's own
+    // indentation is destroyed, so a fenced run is shifted by the shallowest
+    // indent in that run rather than each line by its own.
+    const region = regionIndent(lines, fenced);
     const minMarker = Math.min(...indents);
     if (minMarker > 0) {
-        const shifted = lines.map((l) => isBlank(l.text) ? l : { text: l.text.slice(Math.min(minMarker, indentOf(l.text))), lineNo: l.lineNo });
+        const shifted = lines.map((l, i) => isBlank(l.text) ? l : { text: l.text.slice(Math.min(minMarker, region[i])), lineNo: l.lineNo });
         const inner = normalizeIndents(shifted);
         // Pulling a uniformly indented block to the margin changes no hierarchy,
         // so it is only worth reporting when the levels themselves had to move, or
@@ -2864,18 +2957,29 @@ function normalizeIndents(lines) {
     const stack = [];
     let adjusted = false;
     let delta = 0;
-    const out = lines.map((l) => {
+    const out = lines.map((l, i) => {
         if (isBlank(l.text))
             return l;
         const ind = indentOf(l.text);
-        if (!matchListMarker(l.text)) {
-            // Continuation lines follow the marker they belong to.
+        if (fenced[i] || !matchListMarker(l.text)) {
+            // Continuation lines follow the marker they belong to. A fenced line is
+            // always continuation, never a marker, and clamps its shift to the run's
+            // shallowest indent so the whole block moves as one.
             if (delta === 0)
                 return l;
-            const shifted = Math.max(0, ind + delta);
+            const eff = fenced[i] ? Math.max(delta, -region[i]) : delta;
+            const shifted = Math.max(0, ind + eff);
             return { text: ' '.repeat(shifted) + l.text.slice(ind), lineNo: l.lineNo };
         }
         while (stack.length > 1 && ind <= stack[stack.length - 1] - 1)
+            stack.pop();
+        // The base level is not sacred. It was fixed by whichever marker happened
+        // to come first, so a genuinely shallower marker later in the item was
+        // snapped UP to it and its own children then collided with it at that same
+        // level — one whole level of hierarchy gone. Two columns is the same
+        // "clearly shallower" margin the push below uses for "clearly deeper", so
+        // ordinary one-column drift is still absorbed rather than opening a level.
+        if (stack.length === 1 && ind <= stack[0] - 2)
             stack.pop();
         const top = stack[stack.length - 1];
         let target;
@@ -2966,8 +3070,14 @@ function findSandwichedBlockEnd(lines, start, first, attached) {
             const m = matchListMarker(t);
             // Only pull the block in if it was code or a command. A prose paragraph
             // between two lists is a label that legitimately separates them.
+            // Absorb only a block the author attached to the item — no blank line
+            // between them. `1. step` / blank / fence / blank / `2. step` is an
+            // ordinary idiom that every parser renders sensibly, and pulling those
+            // fences into the item made parallel steps render at different indents
+            // depending on whether another item happened to follow. A bare command
+            // is still rescued across a blank line, because nothing else will.
             if (m && compatibleMarker(first, m))
-                return sawAbsorbable ? j : -1;
+                return (attached || sawCommand) && sawAbsorbable ? j : -1;
         }
         if (isBlank(t))
             continue;
@@ -2976,8 +3086,12 @@ function findSandwichedBlockEnd(lines, start, first, attached) {
             sawCommand = true;
             continue;
         }
-        // Anything else — prose, a heading, a rule — ends the list.
-        return -1;
+        // Anything else — prose, a heading, a rule — ends the list. But a block
+        // the author attached directly under the item belongs to that item no
+        // matter what follows it. Requiring another list item afterwards made the
+        // last of three parallel bullets keep its fence at the margin while the
+        // first two nested, purely because a heading came next.
+        return attached && sawAbsorbable ? j : -1;
     }
     // Ran to the end of input with no further item. A trailing bare command is
     // orphaned continuation of the last step, and so is a block that touches the
@@ -3190,6 +3304,12 @@ function cellShape(cell) {
         return 'num';
     if (/^[\w./@-]+$/.test(c))
         return 'ident';
+    // A cell that is exactly one link or image is structurally a different kind
+    // of column from a sentence, and README tables are full of both. Collapsing
+    // them into 'prose' left the overflow scorer unable to tell a title column
+    // from a description column, so every merge fell through to the tie-break.
+    if (/^!?\[[^\]]*\]\([^)]*\)$/.test(c))
+        return 'link';
     return 'prose';
 }
 function sameCells(a, b) {
@@ -3222,6 +3342,14 @@ function buildTable(lines, headerIdx, sepIdx, align, nonstandardSep, ctx, blocks
             break;
         if (isTableBorderLine(t))
             continue; // `+---+---+` / `├───┼───┤` decoration
+        // A commented-out row is how authors disable an entry. Parsing it as a
+        // row renders `<!--` and `-->` as cell text and presents the disabled
+        // entry as a live one, which is worse than dropping it.
+        if (/^\s*<!--/.test(t)) {
+            if (/-->\s*$/.test(t))
+                continue;
+            break; // a comment that opens here and closes later ends the table
+        }
         // A line that reads as a sentence fragment — starting lowercase, and with
         // too few cells to be a row of its own — is a cell the model wrapped onto
         // the next line. Fold it back rather than ending the table.
@@ -3233,7 +3361,13 @@ function buildTable(lines, headerIdx, sepIdx, align, nonstandardSep, ctx, blocks
             // like a sentence. A full sentence under a table is a caption, and
             // folding it in would corrupt the last cell's value.
             const isSentence = /[.!?]\s*$/.test(frag) && frag.split(/\s+/).length > 5;
+            // It must also carry no cell structure of its own. A row that merely
+            // omits a trailing column ("| tesseract-ocr | ... |" with no build
+            // number) is still a row, and folding it away deletes an entire entry —
+            // the single most destructive thing this parser did on real documents.
+            // Only a line with no delimiters at all is a genuine wrapped cell.
             if (prev !== undefined &&
+                fragCells === 1 &&
                 /^[a-z(,;)]/.test(frag) &&
                 !isSentence &&
                 !startsAnyBlock(t) &&
@@ -3309,7 +3443,17 @@ function buildTable(lines, headerIdx, sepIdx, align, nonstandardSep, ctx, blocks
     }
     // Determine column count: header wins unless a supermajority of body rows
     // agree on a larger count (the body outvotes a truncated header).
-    const bodyCellCounts = bodyLines.map((l) => splitRow(l.text).length);
+    // Trailing empty cells do not widen a table. Rows ending in a stray `||`
+    // are common and GFM ignores the extra cell; counting it widened whole
+    // tables to an unlabelled extra column and then "repaired" the separator
+    // and every row to match.
+    const bodyCellCounts = bodyLines.map((l) => {
+        const cells = splitRow(l.text);
+        let last = cells.length;
+        while (last > 1 && cells[last - 1].trim() === '')
+            last--;
+        return last;
+    });
     let cols = headerCells.length;
     if (bodyCellCounts.length >= 2) {
         const countFreq = new Map();
@@ -3341,6 +3485,10 @@ function buildTable(lines, headerIdx, sepIdx, align, nonstandardSep, ctx, blocks
         });
     }
     const makeRow = (cells, lineNo) => {
+        // A stray `||` at the end of a row is not overflow — GFM drops the empty
+        // cell, and merging it into a real column corrupts that column's value.
+        while (cells.length > cols && cells[cells.length - 1].trim() === '')
+            cells = cells.slice(0, -1);
         if (cells.length > cols) {
             // Merge the overflow, choosing WHICH cells to join by how well the
             // result fits the column shapes the clean rows established. Always
@@ -3367,10 +3515,19 @@ function buildTable(lines, headerIdx, sepIdx, align, nonstandardSep, ctx, blocks
                     if (profile[idx]?.has(cellShape(candidate[idx])))
                         score++;
                 }
+                // Strictly greater, so an informed tie keeps the leftmost fit: a type
+                // union (`"sm" | "md" | "lg"`) belongs to the middle column it was
+                // split out of, not to the last one.
                 if (score > bestScore) {
                     bestScore = score;
                     best = candidate;
                 }
+                // ...but with no clean row to build a profile from, every position
+                // scores 0 and "leftmost" is not a judgement, just an artefact of loop
+                // order. With no evidence, the overflow goes where authors put extra
+                // content: at the end.
+                if (score === 0 && bestScore === 0)
+                    best = candidate;
             }
             diag.repair('table-ragged-row', `Row has ${cells.length} cells, expected ${cols}; merged the overflow into one cell`, lineNo);
             cells = best ?? cells.slice(0, cols);
@@ -4141,9 +4298,16 @@ const VOID_TAGS = new Set([
 /** Tags left open by this fragment, outermost first. */
 function openTagsOf(html) {
     const open = [];
-    const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*)?(\/?)>/g;
+    // Commented-out markup is not markup. Without this, `<!-- <Flowchart> -->`
+    // invents a `</flowchart>` and a commented-out `<table>` gets a fabricated
+    // `</table>` injected into live output — closers conjured from text the
+    // author deliberately disabled.
+    const live = html.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+    // The attribute run is lazy so it cannot swallow the self-closing slash:
+    // `<a name="11"/>` is self-closing, not an unclosed anchor.
+    const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*?)?\s*(\/?)>/g;
     let m;
-    while ((m = tagRe.exec(html)) !== null) {
+    while ((m = tagRe.exec(live)) !== null) {
         const tag = m[2].toLowerCase();
         if (VOID_TAGS.has(tag) || m[3] === '/')
             continue;
@@ -4420,33 +4584,39 @@ function consumeParagraph(lines, start, ctx, blocks) {
                 emitParagraphAsSetext(para, 1, lines[j], ctx, blocks);
                 return j + 1;
             }
-            // '-' is ambiguous: setext h2 vs thematic break. LLMs overwhelmingly
-            // use --- as a separator, and a document that already uses ATX headings
-            // is not going to switch conventions mid-way.
-            // A setext title is short and label-like. A caption or timestamp
-            // ("Report generated on 2026-08-07") is neither, and the dashes under it
-            // are a divider.
+            // '-' is ambiguous: setext h2 vs thematic break. CommonMark resolves it
+            // unconditionally as a setext h2, and on real documents that is almost
+            // always right — an audit of 3,090 READMEs found the reading below is
+            // the correct one 21 times out of 22. Section titles are lowercase
+            // ("Fuzzy completion"), they end in colons ("Environment:"), they run
+            // long, and in Chinese or Japanese they have no case at all, so none of
+            // those shapes is evidence against a heading.
+            //
+            // Only affirmative evidence of prose overrides the spec: a finished
+            // sentence, or a paragraph that already spans several lines. Both mean
+            // the dashes divide sections rather than underline a title.
             const prevText = prev.text.trim();
-            const looksLikeTitle = para.length === 1 &&
-                prevText.length <= 64 &&
-                prevText.split(/\s+/).length <= 5 &&
-                !/[.!?;,:]$/.test(prevText) &&
-                !/\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|\b(19|20)\d{2}\b/.test(prevText) &&
-                delimiterPipeCount(prevText) === 0;
-            // In a document that otherwise uses ATX headings, a dash line is a
-            // divider unless the line above is title-cased — "Benchmark Results" is
-            // a section title; "Body A ends here" is the end of a paragraph.
-            const accept = ctx.prefersThematicBreak ? looksLikeTitle && isTitleCased(prevText) : looksLikeTitle;
-            if (accept) {
+            // A full stop, and only a full stop. `?` and `!` were in this set for
+            // one round and produced 17 false positives out of 17: FAQ sections are
+            // a README staple, and "Why Ramda?", "What is this?", "Is this a fork?"
+            // and "为什么我们需要一个基准测试？" are all headings. Demoting them broke
+            // in-document anchors and orphaned the h3s underneath. A question mark
+            // is evidence FOR a heading, not against one. An ellipsis is not a
+            // finished sentence either ("Coming soon…").
+            const finishedSentence = /[.。]["'”’)\]]?$/.test(prevText) && !/(\.\.\.|…)["'”’)\]]?$/.test(prevText);
+            const isProse = finishedSentence || para.length > 1;
+            // A row of pipes under dashes is table structure, not a title.
+            const isTableRow = delimiterPipeCount(prevText) > 0;
+            if (!isProse && !isTableRow) {
                 if (setext[1].length >= 3) {
-                    diag.note('setext-vs-break-ambiguity', `Dashes under "${prevText.slice(0, 40)}" read as a setext heading (short title-like line)`, lines[j].lineNo);
+                    diag.note('setext-vs-break-ambiguity', `Dashes under "${prevText.slice(0, 40)}" read as a setext heading`, lines[j].lineNo);
                 }
                 emitParagraphAsSetext(para, 2, lines[j], ctx, blocks);
                 return j + 1;
             }
-            diag.repair('setext-vs-break-ambiguity', ctx.prefersThematicBreak && looksLikeTitle
-                ? 'Dashes treated as a thematic break: this document uses ATX headings throughout'
-                : 'Dashes after a paragraph treated as a thematic break, not a setext heading', lines[j].lineNo);
+            diag.repair('setext-vs-break-ambiguity', finishedSentence
+                ? 'Dashes after a complete sentence treated as a thematic break, not a setext heading'
+                : 'Dashes after a multi-line paragraph treated as a thematic break, not a setext heading', lines[j].lineNo);
             flushParagraph(para, ctx, blocks);
             blocks.push({ type: 'thematicBreak', pos: { startLine: lines[j].lineNo, endLine: lines[j].lineNo } });
             return j + 1;
@@ -4811,7 +4981,6 @@ function parse(src, options = {}) {
             options: opts,
             refs: new Map(),
             refLines: new Set(),
-            prefersThematicBreak: detectAtxStyle(lines),
             richDocument: detectRichDocument(lines),
             depth: 0,
             htmlClosers: indexHtmlClosers(lines),
