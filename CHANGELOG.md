@@ -40,6 +40,25 @@ to reproduce.
   docstring inside a ```` ```python ```` block no longer closes it and a
   ```` ```json ```` line that opens the next block is no longer consumed as
   this block's closer.
+- **Setext headings are no longer demoted to a paragraph plus a rule.** The
+  `Title` / `---` decision used title case, word count, line length, a
+  trailing-colon veto, a date veto, and a document-level "this file uses ATX
+  headings" signal. Every one of those destroyed real headings — lowercase
+  titles, `Environment:`, any CJK title (no ASCII case test can match one), and
+  every setext heading in a document that also uses ATX. The CommonMark reading
+  now wins unless the line above is a finished sentence or an already-multi-line
+  paragraph. Firings fell from 206 to 21 on the corpus.
+- **`｜` and `│` are only table delimiters when the row has no ASCII pipe.**
+  They are ordinary CJK punctuation and link-list decoration, and promoting
+  them inside rows that already used real pipes split cells the author never
+  split — which then widened the table, padded the separator, and made every
+  row ragged, so one misread produced three different repair diagnostics.
+- **Table rows are never folded away.** A row that merely omitted a trailing
+  column (`| tesseract-ocr | tesseract.org |` in a 3-column table) was being
+  merged into the row above and deleted outright. The wrapped-cell fold now
+  requires a line with no cell structure at all.
+- **A stray trailing `||` no longer widens a table** or gets merged into a real
+  column; GFM ignores the empty cell and so does Kintsugi.
 
 ### Changed
 

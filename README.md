@@ -124,7 +124,9 @@ for (const d of diagnostics) {
 with too many or too few cells (overflow is merged into the last cell rather than silently
 truncated, which is what GFM does), missing outer pipes, em-dash and `===` separators, tables
 split across a blank line, single-cell caption rows above a real table, and pipes inside code
-spans staying in their cell.
+spans staying in their cell. A row's delimiter is whichever pipe character it actually uses:
+`｜` and `│` delimit a table that has no ASCII pipes, and stay ordinary punctuation inside one
+that does, so `清醒FM｜Gen Z` and `[Challenge](a) │ [Solution](b)` keep their single cell.
 
 **Code fences** — fences never closed before end of input, closers using the wrong character or a
 shorter run than the opener, and nested fences inside a ```` ```markdown ```` block, where the
@@ -143,8 +145,10 @@ MathJax expect to be handed. The [live demo](https://dangxingyu.github.io/kintsu
 nodes through KaTeX in about fifteen lines — see `docs/index.html`.
 
 **Headings** — `##Heading` with no space, seven or more `#`, trailing hash runs, and the
-`Title` / `---` ambiguity, where a short title-like line takes the setext reading and a full
-sentence takes the horizontal-rule reading.
+`Title` / `---` ambiguity, where the setext reading wins unless the line above is a finished
+sentence or an already-multi-line paragraph. Lowercase titles, `Environment:`, and Chinese or
+Japanese titles are headings like any other — a corpus audit showed that guessing from title case
+or length destroys far more real headings than it saves.
 
 **Lists** — unicode bullets (`•`, `‣`, `–`), `(1)` and `1)` markers, inconsistent indent widths,
 non-sequential numbering, `-[ ]` task boxes glued to the bullet, and `[✓]` / `[✗]` checkboxes.

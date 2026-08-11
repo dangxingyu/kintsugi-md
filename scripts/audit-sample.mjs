@@ -119,8 +119,27 @@ for (const [code, bucket] of byCode) {
   }
 }
 
+// Stable per-code ids. The judging workflow returns verdicts keyed by id, and
+// a resumed run replays cached agents into the same journal, so the collector
+// dedupes on this — without it, replayed families get counted twice.
+const perCode = new Map();
+for (const r of rows) {
+  const seen = perCode.get(r.code) ?? [];
+  r.id = `${r.code}#${seen.length}`;
+  seen.push(r);
+  perCode.set(r.code, seen);
+}
+
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
+// One file per code, which is what the judging agents read — each agent takes
+// a family of related codes so it can see them in context.
+const splitDir = `${dirname(outPath)}/audit`;
+mkdirSync(splitDir, { recursive: true });
+for (const [code, list] of perCode) {
+  writeFileSync(`${splitDir}/${code}.jsonl`, list.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
 
 // Emit the firing counts alongside the sample. The weighted precision figure
 // multiplies each code's judged rate by how often that code actually fires, so
