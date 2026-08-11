@@ -17,7 +17,11 @@ if (!journalPath) {
   process.exit(1);
 }
 
-const verdicts = [];
+// Deduped by verdict id. A workflow resumed after a failed agent replays the
+// agents that already succeeded, so their results appear in the journal more
+// than once; counting the raw lines inflates whichever families happened to be
+// replayed and silently skews the precision figure.
+const byId = new Map();
 const summaries = [];
 let started = 0;
 let results = 0;
@@ -33,14 +37,17 @@ for (const line of readFileSync(journalPath, 'utf8').split('\n')) {
   if (o.type === 'started') started++;
   if (o.type !== 'result' || !o.result) continue;
   results++;
-  if (Array.isArray(o.result.verdicts)) verdicts.push(...o.result.verdicts);
+  if (Array.isArray(o.result.verdicts)) {
+    for (const v of o.result.verdicts) byId.set(v.id ?? `${v.code}:${byId.size}`, v);
+  }
   if (o.result.summary) summaries.push(o.result.summary);
 }
 
+const verdicts = [...byId.values()];
 writeFileSync(outPath, verdicts.map((v) => JSON.stringify(v)).join('\n') + '\n');
 
 const codes = new Set(verdicts.map((v) => v.code));
-console.log(`journal: ${results} agent results (${started} starts)`);
+console.log(`journal: ${results} result lines from ${started} agent starts (retries included)`);
 console.log(`collected ${verdicts.length} verdicts across ${codes.size} diagnostic codes`);
 if (summaries.length) {
   const recs = {};
