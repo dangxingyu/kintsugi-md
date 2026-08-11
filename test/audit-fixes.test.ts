@@ -475,3 +475,42 @@ describe('cluster 8d: the indent base level is not fixed by the first marker', (
     expect(html).not.toMatch(/a<ul>/);
   });
 });
+
+describe('cluster 8e: attached blocks absorb uniformly across a list', () => {
+  it('nests every parallel bullet, not just the ones followed by another item', () => {
+    // A corpus measurement found 48 of 84 multi-pair runs rendering mixed:
+    // absorbed for the bullets that had a sibling below, left at the margin
+    // for the last one because a heading came next.
+    const src = [
+      '* OpenAI API', '```bash', 'run a', '```',
+      '* Web UI', '```bash', 'run b', '```',
+      '* Demo', '```bash', 'run c', '```',
+      '', '## Next section',
+    ].join('\n');
+    const html = render(src).html.replace(/\n/g, '');
+    expect(count(html, '<li>')).toBe(3);
+    // all three code blocks live inside list items
+    expect(count(html, '</li>')).toBe(3);
+    expect(count(html, '<pre')).toBe(3);
+    expect(html).not.toMatch(/<\/ul><pre/);
+    expect(html).toContain('<h2>Next section</h2>');
+  });
+
+  it('STILL refuses a detached block even when it is the last thing in the list', () => {
+    const src = ['* Step one', '', '```bash', 'run a', '```', '', '## Next'].join('\n');
+    expect(repairs(src)).toEqual([]);
+  });
+});
+
+describe('cluster 8f: a spaceless marker may be followed by a code span', () => {
+  it('reads a numbered run whose text starts with a code span as a list', () => {
+    const { html } = render(['1.`--flag` does a thing', '2.`--other` does another', '3.`--third` a third'].join('\n'));
+    expect(count(html, '<li>')).toBe(3);
+    expect(html).not.toContain('<ol start');
+  });
+
+  it('STILL leaves decimals and long flags as text', () => {
+    expect(render('3.14 is pi\n2.71 is e').html).not.toContain('<li>');
+    expect(render('--flag one\n--flag two').html).not.toContain('<li>');
+  });
+});

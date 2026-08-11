@@ -176,9 +176,11 @@ export function matchListMarker(text: string): ListMarker | null {
   }
 
   // Markers with no space at all: `-Item`, `*Item`, `1.Install`. Only believed
-  // as part of a run (needsSibling), and only before a letter so that `-5`,
-  // `--flag` and `3.14` stay text.
-  m = /^( {0,5})([-*+])([A-Za-zÀ-ɏ一-鿿][^\n]*)$/.exec(text);
+  // as part of a run (needsSibling), and only before a letter or a code span
+  // so that `-5`, `--flag` and `3.14` stay text. A run written ``1.`--flag`
+  // does a thing`` is common in options docs, and rejecting the backtick split
+  // it into a stranded paragraph plus an <ol start="2">.
+  m = /^( {0,5})([-*+])([A-Za-zÀ-ɏ一-鿿`][^\n]*)$/.exec(text);
   if (m) {
     const indent = m[1]!.length;
     const ch = m[2]!;
@@ -193,7 +195,7 @@ export function matchListMarker(text: string): ListMarker | null {
       contentIndent: indent + 1, rest, style: 'bullet', missingSpace: true,
     };
   }
-  m = /^( {0,5})(\d{1,9})([.)])([A-Za-zÀ-ɏ一-鿿][^\n]*)$/.exec(text);
+  m = /^( {0,5})(\d{1,9})([.)])([A-Za-zÀ-ɏ一-鿿`][^\n]*)$/.exec(text);
   if (m) {
     const indent = m[1]!.length;
     const digits = m[2]!;
@@ -718,8 +720,12 @@ export function findSandwichedBlockEnd(lines: Line[], start: number, first: List
       sawCommand = true;
       continue;
     }
-    // Anything else — prose, a heading, a rule — ends the list.
-    return -1;
+    // Anything else — prose, a heading, a rule — ends the list. But a block
+    // the author attached directly under the item belongs to that item no
+    // matter what follows it. Requiring another list item afterwards made the
+    // last of three parallel bullets keep its fence at the margin while the
+    // first two nested, purely because a heading came next.
+    return attached && sawAbsorbable ? j : -1;
   }
   // Ran to the end of input with no further item. A trailing bare command is
   // orphaned continuation of the last step, and so is a block that touches the
