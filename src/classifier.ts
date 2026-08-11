@@ -21,17 +21,9 @@
  */
 import type { BoldLineContext } from './features.js';
 import { boldHeadingFeatures, FEATURE_NAMES } from './features.js';
-import weightsJson from './model-weights.json' with { type: 'json' };
+import { MODEL_WEIGHTS } from './model-weights.js';
 
-interface ModelFile {
-  model: string;
-  kind: string;
-  featureNames: string[];
-  weights: number[];
-  threshold: number;
-}
-
-const MODEL = weightsJson as ModelFile;
+const MODEL = MODEL_WEIGHTS;
 
 /**
  * Guard against the classic silent-corruption bug: weights retrained against a

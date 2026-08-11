@@ -3,7 +3,7 @@
 All notable changes to Kintsugi are recorded here. The AST and diagnostic-code
 set are the public surface; changes to either are called out explicitly.
 
-## Unreleased
+## 0.2.0 — 2026-08-10
 
 ### Measured
 
@@ -115,6 +115,14 @@ the headline precision figure with that in mind.
 - **`link-url-spaces` fires only on an interior space in a URL**, not the
   harmless trailing-space-before-`)` case, which renders identically in every
   parser.
+
+### Packaging
+
+- The pinned classifier weights ship as a TypeScript module instead of a JSON
+  import. `import … with { type: 'json' }` requires Node 22, while this package
+  supports Node 18, so the published build would have failed to load on the
+  versions it advertised. A plain module also avoids needing a JSON loader in
+  bundlers.
 
 ### Options added
 

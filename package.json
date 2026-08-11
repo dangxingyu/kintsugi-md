@@ -1,6 +1,6 @@
 {
   "name": "kintsugi-md",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A markdown parser that never fails on LLM output. Repairs broken markdown and shows you every seam.",
   "type": "module",
   "main": "./dist/index.js",

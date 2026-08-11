@@ -190,6 +190,38 @@ Two things it will not attempt, on purpose:
   are kept. The one exception is a header row re-emitted verbatim inside its own table, which is
   dropped as duplicate structure — never as content.
 
+## Measured, not asserted
+
+Every claim above is checked against a corpus of 3,090 real GitHub READMEs
+(65.5 MB, human-authored, 30+ languages) rather than against fixtures someone
+thought of. On that corpus Kintsugi **never throws, never loses content, and
+never exceeds linear time** — those are hard invariants and they hold on every
+document.
+
+The repair layer is held to a different standard, because a repair on markdown
+that was already fine is worse than no repair at all. Each repair diagnostic is
+sampled and judged against markdown-it, and the results are deliberately public:
+
+| | first audit | now |
+| --- | --- | --- |
+| documents triggering a repair | 51.6% | **13.3%** |
+| repairs per document | 4.16 | **0.37** |
+| judged precision (sample) | 0.16 | **0.33** |
+| weighted by firing volume | 0.03 | **0.33** |
+
+Read that honestly: **roughly a third of repairs are judged clear wins, and
+most of the rest are neutral rather than harmful.** Seven heuristics are
+strongly net-positive; a few still fire more often than they earn their keep,
+and they are listed by name in `CHANGELOG.md`. If you want none of this, the
+invariants above hold with every repair heuristic quiet — well-formed markdown
+produces zero diagnostics and the standard CommonMark reading.
+
+Reproduce the whole thing:
+
+```bash
+node scripts/corpus-check.mjs data/readmes.jsonl && node scripts/audit-sample.mjs data/readmes.jsonl
+```
+
 ## Performance
 
 Recovery is linear in input size, and the test suite enforces it: eleven adversarial constructs are
