@@ -1,5 +1,5 @@
 {
-  "list-indent-adjusted": 565,
+  "list-indent-adjusted": 300,
   "html-escaped-unknown-tag": 86,
   "link-unclosed": 78,
   "link-ref-undefined": 67,
@@ -10,7 +10,7 @@
   "fence-close-trailing-text": 36,
   "link-space-before-paren": 36,
   "emphasis-orphan-delimiter": 31,
-  "list-paren-number": 29,
+  "list-paren-number": 30,
   "list-unicode-bullet": 27,
   "code-span-auto-closed": 25,
   "emphasis-space-padded": 21,

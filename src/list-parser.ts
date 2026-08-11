@@ -605,6 +605,13 @@ export function normalizeIndents(lines: Line[]): { lines: Line[]; adjusted: bool
     }
 
     while (stack.length > 1 && ind <= stack[stack.length - 1]! - 1) stack.pop();
+    // The base level is not sacred. It was fixed by whichever marker happened
+    // to come first, so a genuinely shallower marker later in the item was
+    // snapped UP to it and its own children then collided with it at that same
+    // level — one whole level of hierarchy gone. Two columns is the same
+    // "clearly shallower" margin the push below uses for "clearly deeper", so
+    // ordinary one-column drift is still absorbed rather than opening a level.
+    if (stack.length === 1 && ind <= stack[0]! - 2) stack.pop();
     const top = stack[stack.length - 1];
     let target: number;
     if (top === undefined || ind > top + 1) {

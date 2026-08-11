@@ -454,3 +454,24 @@ describe('cluster 8c: an italic lead-in is not a bullet', () => {
     expect(count(html, '<li>')).toBe(3);
   });
 });
+
+describe('cluster 8d: the indent base level is not fixed by the first marker', () => {
+  it('nests children under a marker that is shallower than the first one seen', () => {
+    // The stack guard could never pop the base, so the base was whichever
+    // marker came first. `- Optional Labs` at 2 was snapped up to the quizzes'
+    // level at 4, and its own labs then collided with it there — a whole level
+    // of hierarchy destroyed. All three judges of a corpus audit flagged this
+    // same row independently.
+    const src = ['- Week 1', '', '    - quiz A', '    - quiz B', '  - Optional Labs', '    - lab 1', '    - lab 2'].join('\n');
+    const flat = render(src).html.replace(/\n/g, '');
+    expect(flat).toMatch(/<li>Optional Labs<ul><li>lab 1<\/li><li>lab 2<\/li><\/ul><\/li>/);
+    // and the quizzes stay siblings of it, not children
+    expect(flat).toMatch(/<li>quiz A<\/li><li>quiz B<\/li>/);
+  });
+
+  it('STILL absorbs one-column indent drift instead of opening a level', () => {
+    const { html } = render(['- Top', '', '   - a', '  - b', '   - c'].join('\n'));
+    expect(count(html, '<ul>')).toBe(2); // outer + one child list, not three
+    expect(html).not.toMatch(/a<ul>/);
+  });
+});
