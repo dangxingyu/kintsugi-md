@@ -11,10 +11,30 @@ Kintsugi's repair layer was audited against a corpus of 3,090 real GitHub
 READMEs (65.5 MB, human-authored, many languages) by sampling repair
 diagnostics and judging each against a mainstream CommonMark+GFM parser
 (markdown-it). The first audit found the repair layer was **net-negative on
-real documents** — 0.16 sample precision — dominated by a handful of
-heuristics that fired constantly and were almost always wrong. This release
-fixes those clusters. See `scripts/corpus-check.mjs` and `scripts/audit-sample.mjs`
-to reproduce.
+real documents** — 0.16 sample precision, 0.03 weighted by firing volume —
+dominated by a handful of heuristics that fired constantly and were almost
+always wrong. This release fixes those clusters.
+
+Across three audit rounds, overall sample precision went 0.16 → 0.31 → 0.33
+and volume-weighted precision 0.03 → 0.25 → 0.33, with total repairs on the
+corpus falling from 12,832 to 1,270. The setext and table families were then
+re-judged after their fixes and independently refuted claim-by-claim:
+
+| family | before | after (refutation-verified) |
+| --- | --- | --- |
+| `setext-vs-break-ambiguity` | 1 true / 21 false | 4 true / 0 false |
+| `table-ragged-row` | 1 / 20 | 19 / 5 |
+| `table-separator-mismatch` | 0 / 12 | 12 true, 2 harmless, 0 false |
+| `table-merged-continuation` | 2 / 23 | 3 / 0 |
+
+Reproduce with `scripts/corpus-check.mjs`, `scripts/audit-sample.mjs`,
+`scripts/audit-collect.mjs` and `scripts/audit-report.mjs`.
+
+**Known limitation.** `list-indent-adjusted` is now roughly half of all
+remaining false-positive volume, and it is also the least stable measurement
+in the audit: two rounds judged comparable samples of the same unchanged
+heuristic 2-true/5-false/18-harmless and 8-true/16-false/1-harmless. Treat the
+headline precision figure as carrying real error bars until that is resolved.
 
 ### Fixed
 
