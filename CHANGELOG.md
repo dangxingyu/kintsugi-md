@@ -26,15 +26,21 @@ re-judged after their fixes and independently refuted claim-by-claim:
 | `table-ragged-row` | 1 / 20 | 19 / 5 |
 | `table-separator-mismatch` | 0 / 12 | 12 true, 2 harmless, 0 false |
 | `table-merged-continuation` | 2 / 23 | 3 / 0 |
+| `list-indent-adjusted` | 8 / 16 | 1-6 false of 25 (3-judge panel) |
 
 Reproduce with `scripts/corpus-check.mjs`, `scripts/audit-sample.mjs`,
 `scripts/audit-collect.mjs` and `scripts/audit-report.mjs`.
 
-**Known limitation.** `list-indent-adjusted` is now roughly half of all
-remaining false-positive volume, and it is also the least stable measurement
-in the audit: two rounds judged comparable samples of the same unchanged
-heuristic 2-true/5-false/18-harmless and 8-true/16-false/1-harmless. Treat the
-headline precision figure as carrying real error bars until that is resolved.
+`list-indent-adjusted` was then fixed as its own cycle and re-judged by three
+independent judges over the same rows. Its judged false-positive count fell
+from 16 of 25 to 1-6 of 25 depending on judge, and the two rows the panel
+agreed were false positives are both fixed.
+
+**Known limitation.** The judges still disagree about this code, but on a
+narrower question: 15 of 25 rows split HARMLESS versus TRUE_REPAIR — whether
+nesting an attached code block under its bullet actively helps a reader or is
+merely neutral — rather than on whether it does harm. Read its contribution to
+the headline precision figure with that in mind.
 
 ### Fixed
 
@@ -79,6 +85,23 @@ headline precision figure as carrying real error bars until that is resolved.
   requires a line with no cell structure at all.
 - **A stray trailing `||` no longer widens a table** or gets merged into a real
   column; GFM ignores the empty cell and so does Kintsugi.
+- **List repairs no longer rewrite fenced content.** The flush-left absorb
+  asked "does this look like a shell command?" line by line with no idea it
+  was inside a fence, so it indented some lines of a code block and not
+  others; and the indent normalizer read a ` * ` JSDoc continuation inside a
+  ```` ```ts ```` block as a list marker and re-striped the comment. Both now
+  treat fenced lines as content, and a fenced run shifts rigidly.
+- **A code block is only absorbed into a list item when the author attached
+  it** with no blank line — but then it is absorbed consistently, whether or
+  not another list item happens to follow. Previously the last bullet of a run
+  kept its block at the margin while its siblings nested.
+- **A shallower list marker no longer collapses into the level above it.** The
+  indent base was fixed by whichever marker came first, so a genuinely
+  shallower sibling later in the item was snapped up to it and its own
+  children collided with it there, destroying a level of nesting.
+- **`*Note*: text` is emphasis, not a bullet** with a missing space, and
+  `1.`` `--flag` ``' is a list item — a spaceless marker may be followed by a
+  code span.
 
 ### Changed
 
