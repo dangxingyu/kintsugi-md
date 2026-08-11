@@ -213,6 +213,24 @@ describe('cluster 5: setext headings are not demoted to paragraph + rule', () =>
     expect(h2(src)).toContain('<h2>Section A</h2>');
   });
 
+  it('keeps question-form FAQ headings, which are a README staple', () => {
+    // Every one of these is a real section heading from the audit corpus that
+    // a `?`-terminates-a-sentence rule demoted to a paragraph plus a rule,
+    // breaking the in-document anchor that linked to it.
+    for (const t of ['Why Ramda?', 'What is this?', 'Why C?', 'Is this a fork?',
+                     "What's with the name?", 'WANT TO CONTRIBUTE?',
+                     '为什么我们需要一个中文任务的基准测试？']) {
+      const { html } = render(`${t}\n---`);
+      expect(html, t).toContain('<h2>');
+      expect(html, t).not.toContain('<hr />');
+    }
+  });
+
+  it('keeps a heading ending in an exclamation or an ellipsis', () => {
+    expect(h2('I want to keep track of how Brackets is doing!\n---')).toContain('<h2>');
+    expect(h2('Coming soon...\n---')).toContain('<h2>');
+  });
+
   it('STILL reads dashes after a finished sentence as a rule', () => {
     const src = 'Restart Claude Code to apply the new mode configuration.\n---';
     const { html } = render(src);
@@ -296,6 +314,41 @@ describe('cluster 7: table rows are never folded away', () => {
     const { html } = render(src);
     expect(html).toContain('every step of the process');
     expect(count(html, '<tr')).toBe(2);
+  });
+
+  it('merges row overflow at the end, where the author added it', () => {
+    // A 2-column table whose rows carry an extra trailing [PDF] link: the
+    // title must stay in column 1, not get fused to the description.
+    const src = [
+      '| Paper | Key Contribution |',
+      '|-------|-----------------|',
+      '| [Chain of Draft](a) | 5 words per step | [PDF](b) |',
+      '| [Latent Reasoning](c) | fewer tokens | [PDF](d) |',
+    ].join('\n');
+    const { html } = render(src);
+    expect(html).toContain('<td><a href="a">Chain of Draft</a></td>');
+    expect(html).not.toMatch(/<td>[^<]*Chain of Draft[^|]*\|/);
+  });
+
+  it('breaks a merge tie rightmost when one row gives no shape profile', () => {
+    const src = '| A | B |\n| --- | --- |\n| one | two | three |';
+    const { html } = render(src);
+    expect(html).toContain('<td>one</td>');
+    expect(html).toContain('two | three');
+  });
+
+  it('does not render a commented-out row as cell text', () => {
+    const src = [
+      '| Target | Supported |',
+      '| --- | --- |',
+      '| linux | yes |',
+      '<!-- | windows | yes | -->',
+      '| macos | yes |',
+    ].join('\n');
+    const { html } = render(src);
+    expect(html).not.toContain('&lt;!--');
+    expect(html).not.toContain('windows');
+    expect(html).toContain('macos');
   });
 
   it('STILL reattaches rows split off by a stray blank line', () => {

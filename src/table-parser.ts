@@ -184,6 +184,11 @@ export function cellShape(cell: string): string {
   if (/^(true|false|yes|no|n\/a|-|✓|✗)$/i.test(c)) return 'bool';
   if (/^[$€£]?[\d.,]+\s*[%a-zA-Z]{0,4}$/.test(c)) return 'num';
   if (/^[\w./@-]+$/.test(c)) return 'ident';
+  // A cell that is exactly one link or image is structurally a different kind
+  // of column from a sentence, and README tables are full of both. Collapsing
+  // them into 'prose' left the overflow scorer unable to tell a title column
+  // from a description column, so every merge fell through to the tie-break.
+  if (/^!?\[[^\]]*\]\([^)]*\)$/.test(c)) return 'link';
   return 'prose';
 }
 
@@ -225,6 +230,13 @@ export function buildTable(
     const t = lines[j]!.text;
     if (isBlank(t)) break;
     if (isTableBorderLine(t)) continue; // `+---+---+` / `├───┼───┤` decoration
+    // A commented-out row is how authors disable an entry. Parsing it as a
+    // row renders `<!--` and `-->` as cell text and presents the disabled
+    // entry as a live one, which is worse than dropping it.
+    if (/^\s*<!--/.test(t)) {
+      if (/-->\s*$/.test(t)) continue;
+      break; // a comment that opens here and closes later ends the table
+    }
     // A line that reads as a sentence fragment — starting lowercase, and with
     // too few cells to be a row of its own — is a cell the model wrapped onto
     // the next line. Fold it back rather than ending the table.
@@ -384,10 +396,18 @@ export function buildTable(
           }
           if (profile[idx]?.has(cellShape(candidate[idx]!))) score++;
         }
+        // Strictly greater, so an informed tie keeps the leftmost fit: a type
+        // union (`"sm" | "md" | "lg"`) belongs to the middle column it was
+        // split out of, not to the last one.
         if (score > bestScore) {
           bestScore = score;
           best = candidate;
         }
+        // ...but with no clean row to build a profile from, every position
+        // scores 0 and "leftmost" is not a judgement, just an artefact of loop
+        // order. With no evidence, the overflow goes where authors put extra
+        // content: at the end.
+        if (score === 0 && bestScore === 0) best = candidate;
       }
       diag.repair('table-ragged-row', `Row has ${cells.length} cells, expected ${cols}; merged the overflow into one cell`, lineNo);
       cells = best ?? cells.slice(0, cols);

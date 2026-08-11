@@ -1126,11 +1126,15 @@ function consumeParagraph(lines: Line[], start: number, ctx: Ctx, blocks: Block[
       // sentence, or a paragraph that already spans several lines. Both mean
       // the dashes divide sections rather than underline a title.
       const prevText = prev.text.trim();
-      // Terminal punctuation is the one signal that separated the audit's
-      // single true demotion from all 21 false ones — every false positive
-      // ended in a colon, or in no punctuation at all. Section titles do not
-      // end in a full stop; sentences do.
-      const finishedSentence = /[.!?。！？]["'”’)\]]?$/.test(prevText);
+      // A full stop, and only a full stop. `?` and `!` were in this set for
+      // one round and produced 17 false positives out of 17: FAQ sections are
+      // a README staple, and "Why Ramda?", "What is this?", "Is this a fork?"
+      // and "为什么我们需要一个基准测试？" are all headings. Demoting them broke
+      // in-document anchors and orphaned the h3s underneath. A question mark
+      // is evidence FOR a heading, not against one. An ellipsis is not a
+      // finished sentence either ("Coming soon…").
+      const finishedSentence =
+        /[.。]["'”’)\]]?$/.test(prevText) && !/(\.\.\.|…)["'”’)\]]?$/.test(prevText);
       const isProse = finishedSentence || para.length > 1;
       // A row of pipes under dashes is table structure, not a title.
       const isTableRow = delimiterPipeCount(prevText) > 0;
