@@ -45,6 +45,18 @@ describe('cluster 1: HTML blocks split across blank lines are not force-closed',
     expect(repairs(src)).toEqual([]);
   });
 
+  it('does not invent closers from commented-out markup', () => {
+    // `<!-- <Flowchart> -->` was producing a fabricated </flowchart>, and a
+    // commented-out <table> got a </table> injected into live output.
+    expect(repairs('<!-- <Main description> -->\n\nText.')).toEqual([]);
+    expect(render('<!--\n<table><tr><td>x</td></tr>\n-->\n\nText.').html).not.toContain('</table>');
+  });
+
+  it('reads a self-closing tag with attributes as self-closing', () => {
+    // `<a name="11"/>` is not an unclosed anchor.
+    expect(repairs('<a name="11"/>\n\n# Heading')).toEqual([]);
+  });
+
   it('STILL closes a tag that is genuinely never closed anywhere below', () => {
     const src = '<details>\n<summary>Truncated</summary>\n\nBody that never closes.';
     const { html } = render(src);

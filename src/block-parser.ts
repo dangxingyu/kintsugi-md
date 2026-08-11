@@ -822,9 +822,16 @@ const VOID_TAGS = new Set([
 /** Tags left open by this fragment, outermost first. */
 function openTagsOf(html: string): string[] {
   const open: string[] = [];
-  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*)?(\/?)>/g;
+  // Commented-out markup is not markup. Without this, `<!-- <Flowchart> -->`
+  // invents a `</flowchart>` and a commented-out `<table>` gets a fabricated
+  // `</table>` injected into live output — closers conjured from text the
+  // author deliberately disabled.
+  const live = html.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+  // The attribute run is lazy so it cannot swallow the self-closing slash:
+  // `<a name="11"/>` is self-closing, not an unclosed anchor.
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*?)?\s*(\/?)>/g;
   let m: RegExpExecArray | null;
-  while ((m = tagRe.exec(html)) !== null) {
+  while ((m = tagRe.exec(live)) !== null) {
     const tag = m[2]!.toLowerCase();
     if (VOID_TAGS.has(tag) || m[3] === '/') continue;
     if (m[1] === '/') {
