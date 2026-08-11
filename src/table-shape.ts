@@ -22,12 +22,19 @@ const STANDARD_SEPARATOR_CELL = /^:?-+:?$/;
 /**
  * Normalize unicode table drawing into ASCII pipes so box-drawing and
  * fullwidth-pipe tables parse like ordinary ones.
+ *
+ * A line uses exactly one delimiter character, and ASCII `|` wins whenever it
+ * is present. `｜` and `│` are ordinary punctuation in Chinese and Japanese
+ * ("清醒FM｜Gen Z 迷茫图鉴") and decoration in link lists ("[A](x) │ [B](y)"),
+ * so promoting them to delimiters inside a row that already has real pipes
+ * splits cells the author never split — which then cascades into a widened
+ * table, a padded separator and a ragged final row. Only a line with no ASCII
+ * pipe at all can be delimited by a lookalike.
  */
 export function normalizePipes(text: string): string {
-  const out = text
-    .replace(PIPE_LOOKALIKES, '|')
-    .replace(BOX_JUNCTIONS, '|')
-    .replace(BOX_CORNERS, '|');
+  const out = text.includes('|')
+    ? text
+    : text.replace(PIPE_LOOKALIKES, '|').replace(BOX_JUNCTIONS, '|').replace(BOX_CORNERS, '|');
   // Only a whole-line `+---+---+` border counts; a lone `+` is arithmetic.
   return ASCII_BORDER.test(out.trim()) ? out.replace(/\+/g, '|') : out;
 }

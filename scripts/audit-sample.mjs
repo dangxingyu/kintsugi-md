@@ -122,6 +122,16 @@ for (const [code, bucket] of byCode) {
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
+// Emit the firing counts alongside the sample. The weighted precision figure
+// multiplies each code's judged rate by how often that code actually fires, so
+// the two files have to describe the same parser run — a hand-maintained count
+// silently reports the old parser's volume against the new parser's verdicts.
+const firingsPath = outPath.replace(/(\.jsonl)?$/, '').replace(/-sample$/, '') + '-firings.json';
+const firings = Object.fromEntries(
+  [...byCode].sort((a, b) => b[1].total - a[1].total).map(([code, b]) => [code, b.total]),
+);
+writeFileSync(firingsPath, JSON.stringify(firings, null, 2) + '\n');
+
 console.log(`sampled ${rows.length} diagnostics across ${byCode.size} codes\n`);
 console.log('code                              firings   sampled   identical-to-reference');
 for (const [code, bucket] of [...byCode].sort((a, b) => b[1].total - a[1].total)) {
@@ -132,3 +142,4 @@ for (const [code, bucket] of [...byCode].sort((a, b) => b[1].total - a[1].total)
   );
 }
 console.log(`\nwrote ${outPath}`);
+console.log(`wrote ${firingsPath}`);

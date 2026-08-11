@@ -185,3 +185,131 @@ describe('cluster 4: fuzzy fence closers yield to a real closer below', () => {
     expect(codes('```js\nconst x = 1;')).toContain('fence-unclosed');
   });
 });
+
+describe('cluster 5: setext headings are not demoted to paragraph + rule', () => {
+  const h2 = (src: string) => render(src).html;
+
+  it('keeps a lowercase section title', () => {
+    expect(h2('Fuzzy completion\n----------------')).toContain('<h2>Fuzzy completion</h2>');
+  });
+
+  it('keeps a colon-terminated title', () => {
+    expect(h2('Environment:\n---')).toContain('<h2>Environment:</h2>');
+    expect(h2('Models Detail:\n---')).toContain('<h2>Models Detail:</h2>');
+  });
+
+  it('keeps a CJK title, which no ASCII title-case test can recognize', () => {
+    const src = '中文任务基准测评(ChineseGLUE)-排行榜 Leaderboard\n---';
+    expect(h2(src)).toMatch(/<h2>中文任务基准测评/);
+    expect(h2(src)).not.toContain('<hr />');
+  });
+
+  it('keeps a long multi-word title', () => {
+    expect(h2('Parser Interface (backwards compat prior to REST)\n---')).toMatch(/<h2>Parser Interface/);
+  });
+
+  it('keeps a setext heading in a document that otherwise uses ATX', () => {
+    const src = '# Title\n\n## Real ATX\n\ntext\n\nSection A\n---\n\nmore';
+    expect(h2(src)).toContain('<h2>Section A</h2>');
+  });
+
+  it('STILL reads dashes after a finished sentence as a rule', () => {
+    const src = 'Restart Claude Code to apply the new mode configuration.\n---';
+    const { html } = render(src);
+    expect(html).toContain('<hr />');
+    expect(html).not.toMatch(/<h[12]>Restart/);
+    expect(repairs(src).map((d) => d.code)).toContain('setext-vs-break-ambiguity');
+  });
+
+  it('STILL reads dashes after a multi-line paragraph as a rule', () => {
+    expect(h2('one line of prose\nand a second line\n---')).toContain('<hr />');
+  });
+});
+
+describe('cluster 6: pipe lookalikes are content when the row has real pipes', () => {
+  it('keeps a fullwidth pipe inside a cell as punctuation', () => {
+    const src = '| 标题 |\n| --- |\n| 清醒FM｜Gen Z 迷茫图鉴 |';
+    const { html } = render(src);
+    expect(html).toContain('清醒FM｜Gen Z 迷茫图鉴');
+    expect(count(html, '<td')).toBe(1);
+    expect(repairs(src)).toEqual([]);
+  });
+
+  it('keeps a box-drawing bar inside a cell as decoration', () => {
+    const src = '| Name | Links |\n| --- | --- |\n| Day 1 | [Challenge](a) │ [Solution](b) |';
+    const { html } = render(src);
+    expect(count(html, '<td')).toBe(2);
+    expect(repairs(src)).toEqual([]);
+  });
+
+  it('STILL parses a table delimited entirely by fullwidth pipes', () => {
+    const { html } = render('｜ A ｜ B ｜\n｜ --- ｜ --- ｜\n｜ 1 ｜ 2 ｜');
+    expect(count(html, '<td')).toBe(2);
+    expect(html).toContain('<th>A</th>');
+  });
+
+  it('STILL parses a box-drawn table', () => {
+    const { html } = render('┌─────┬─────┐\n│ A   │ B   │\n├─────┼─────┤\n│ 1   │ 2   │\n└─────┴─────┘');
+    expect(html).toContain('<table>');
+    expect(count(html, '<td')).toBe(2);
+  });
+});
+
+describe('cluster 7: table rows are never folded away', () => {
+  it('keeps a row that merely omits a trailing column', () => {
+    // 'tesseract-ocr' has no build number and starts lowercase; folding it
+    // into the row above deleted the entry outright.
+    const src = [
+      '| Program | Website | Build # |',
+      '| --- | --- | --- |',
+      '| terminator | term.org | 17134 |',
+      '| tesseract-ocr | tesseract.org |',
+      '| tmux | tmux.org | 14393 |',
+    ].join('\n');
+    const { html } = render(src);
+    expect(html).toContain('tesseract-ocr');
+    expect(count(html, '<tr')).toBe(4); // header + 3 body rows, none swallowed
+    expect(html).not.toMatch(/terminator[^<]*tesseract/);
+  });
+
+  it('does not let a stray trailing || widen the table', () => {
+    const src = [
+      '| Feature | Status |',
+      '| --- | --- |',
+      '| alpha | done ||',
+      '| beta | wip ||',
+    ].join('\n');
+    const { html } = render(src);
+    expect(count(html, '<th>')).toBe(2);
+    expect(count(html, '<td')).toBe(4);
+    expect(html).toContain('<td>done</td>');
+    expect(repairs(src)).toEqual([]);
+  });
+
+  it('STILL folds a genuine wrapped cell that has no pipes of its own', () => {
+    const src = [
+      '| Option | Description |',
+      '| --- | --- |',
+      '| --verbose | prints a great deal of detail about',
+      'every step of the process |',
+    ].join('\n');
+    const { html } = render(src);
+    expect(html).toContain('every step of the process');
+    expect(count(html, '<tr')).toBe(2);
+  });
+
+  it('STILL reattaches rows split off by a stray blank line', () => {
+    const src = [
+      '| API | Description |',
+      '| --- | --- |',
+      '| ZipCodeAPI | postal lookup |',
+      '',
+      '| Zippopotam | postal lookup |',
+      '| Ziptastic | postal lookup |',
+    ].join('\n');
+    const { html } = render(src);
+    expect(count(html, '<table')).toBe(1);
+    expect(count(html, '<tr')).toBe(4);
+    expect(repairs(src).map((d) => d.code)).toContain('table-merged-continuation');
+  });
+});

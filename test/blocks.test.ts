@@ -480,14 +480,23 @@ describe('setext vs thematic break', () => {
     expect(codes(diagnostics)).toContain('setext-vs-break-ambiguity');
   });
 
-  it('reads a long dash run under a caption line as a divider between two paragraphs', () => {
+  it('reads a dated line directly over dashes as a heading, not a divider', () => {
+    // This path only fires when there is NO blank line before the dashes,
+    // which is the setext shape. A model emitting a divider writes a blank
+    // line on both sides, and that never reaches here. The old veto on any
+    // line containing a date also demoted every heading with a year in it
+    // ("Roadmap 2024"), so it is gone.
     const src = fixture(`Report generated on 2026-08-07
 ----------
 All figures are preliminary.`);
     const { html } = render(src);
-    expect(html).toContain('<hr />');
-    expect(html).toContain('<p>Report generated on 2026-08-07</p>');
+    expect(html).toContain('<h2>Report generated on 2026-08-07</h2>');
     expect(html).toContain('<p>All figures are preliminary.</p>');
+  });
+
+  it('GUARD: a blank-line-delimited "---" is still an unambiguous rule', () => {
+    const { html } = render(fixture('Report generated on 2026-08-07\n\n---\n\nAll figures are preliminary.'));
+    expect(html).toContain('<hr />');
     expect(html).not.toMatch(/<h[12]>Report generated/);
   });
 

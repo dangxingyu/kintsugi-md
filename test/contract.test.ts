@@ -153,10 +153,28 @@ describe('contract: setext-vs-rule judgement', () => {
     expect(html).not.toContain('<p>Benchmark Results</p>');
   });
 
-  it('reads a sentence over dashes as a rule, not a heading', () => {
+  it('reads an unpunctuated line over dashes as a heading, ATX document or not', () => {
+    // A corpus audit killed the old "this document uses ATX, so dashes are a
+    // divider" rule: real documents mix both conventions constantly, and the
+    // rule demoted 21 genuine section headings for every 1 it got right.
+    // Absent evidence of prose, the CommonMark reading wins.
     const { html } = render(doc('Body A ends here\n---'));
-    expect(html).toContain('<hr />');
-    expect(html).not.toMatch(/<h[12]>Body A ends here/);
+    expect(html).toContain('<h2>Body A ends here</h2>');
+  });
+
+  it('reads a lowercase or colon-terminated title over dashes as a heading', () => {
+    // "Fuzzy completion" and "Environment:" are real setext headings from the
+    // audit corpus that the title-case and trailing-colon vetoes destroyed.
+    expect(render(doc('Fuzzy completion\n---')).html).toContain('<h2>Fuzzy completion</h2>');
+    expect(render(doc('Environment:\n---')).html).toContain('<h2>Environment:</h2>');
+  });
+
+  it('reads a CJK title over dashes as a heading', () => {
+    // A CJK line can never satisfy an ASCII title-case test, so the old rule
+    // turned every Chinese setext heading into a paragraph plus a stray rule.
+    const { html } = render(doc('中文任务基准测评\n---'));
+    expect(html).toContain('<h2>中文任务基准测评</h2>');
+    expect(html).not.toContain('<hr />');
   });
 
   it('reads an ALL CAPS line over dashes as a heading', () => {

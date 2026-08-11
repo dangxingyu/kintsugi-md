@@ -742,7 +742,7 @@ describe('dash lines: setext headings, rules, and front matter', () => {
     expect(codes(diagnostics)).toContain('setext-vs-break-ambiguity');
   });
 
-  it('biases toward rules in a document whose heading style is clearly ATX', () => {
+  it('keeps a setext heading in a document whose other headings are ATX', () => {
     const src = md(
       '# Report',
       '',
@@ -765,7 +765,9 @@ describe('dash lines: setext headings, rules, and front matter', () => {
     );
     const { html } = render(src);
     expect(html).toContain('<h2>Section A</h2>');
-    expect(html).not.toContain('<h2>Body A ends here</h2>');
+    // A document using ATX headings can still contain a setext one; the audit
+    // showed assuming otherwise loses far more headings than it saves.
+    expect(html).toContain('<h2>Body A ends here</h2>');
   });
 
   it('collapses a run of consecutive separators into a single rule', () => {

@@ -1114,37 +1114,39 @@ function consumeParagraph(lines: Line[], start: number, ctx: Ctx, blocks: Block[
         emitParagraphAsSetext(para, 1, lines[j]!, ctx, blocks);
         return j + 1;
       }
-      // '-' is ambiguous: setext h2 vs thematic break. LLMs overwhelmingly
-      // use --- as a separator, and a document that already uses ATX headings
-      // is not going to switch conventions mid-way.
-      // A setext title is short and label-like. A caption or timestamp
-      // ("Report generated on 2026-08-07") is neither, and the dashes under it
-      // are a divider.
+      // '-' is ambiguous: setext h2 vs thematic break. CommonMark resolves it
+      // unconditionally as a setext h2, and on real documents that is almost
+      // always right — an audit of 3,090 READMEs found the reading below is
+      // the correct one 21 times out of 22. Section titles are lowercase
+      // ("Fuzzy completion"), they end in colons ("Environment:"), they run
+      // long, and in Chinese or Japanese they have no case at all, so none of
+      // those shapes is evidence against a heading.
+      //
+      // Only affirmative evidence of prose overrides the spec: a finished
+      // sentence, or a paragraph that already spans several lines. Both mean
+      // the dashes divide sections rather than underline a title.
       const prevText = prev.text.trim();
-      const looksLikeTitle =
-        para.length === 1 &&
-        prevText.length <= 64 &&
-        prevText.split(/\s+/).length <= 5 &&
-        !/[.!?;,:]$/.test(prevText) &&
-        !/\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|\b(19|20)\d{2}\b/.test(prevText) &&
-        delimiterPipeCount(prevText) === 0;
+      // Terminal punctuation is the one signal that separated the audit's
+      // single true demotion from all 21 false ones — every false positive
+      // ended in a colon, or in no punctuation at all. Section titles do not
+      // end in a full stop; sentences do.
+      const finishedSentence = /[.!?。！？]["'”’)\]]?$/.test(prevText);
+      const isProse = finishedSentence || para.length > 1;
+      // A row of pipes under dashes is table structure, not a title.
+      const isTableRow = delimiterPipeCount(prevText) > 0;
 
-      // In a document that otherwise uses ATX headings, a dash line is a
-      // divider unless the line above is title-cased — "Benchmark Results" is
-      // a section title; "Body A ends here" is the end of a paragraph.
-      const accept = ctx.prefersThematicBreak ? looksLikeTitle && isTitleCased(prevText) : looksLikeTitle;
-      if (accept) {
+      if (!isProse && !isTableRow) {
         if (setext[1]!.length >= 3) {
-          diag.note('setext-vs-break-ambiguity', `Dashes under "${prevText.slice(0, 40)}" read as a setext heading (short title-like line)`, lines[j]!.lineNo);
+          diag.note('setext-vs-break-ambiguity', `Dashes under "${prevText.slice(0, 40)}" read as a setext heading`, lines[j]!.lineNo);
         }
         emitParagraphAsSetext(para, 2, lines[j]!, ctx, blocks);
         return j + 1;
       }
       diag.repair(
         'setext-vs-break-ambiguity',
-        ctx.prefersThematicBreak && looksLikeTitle
-          ? 'Dashes treated as a thematic break: this document uses ATX headings throughout'
-          : 'Dashes after a paragraph treated as a thematic break, not a setext heading',
+        finishedSentence
+          ? 'Dashes after a complete sentence treated as a thematic break, not a setext heading'
+          : 'Dashes after a multi-line paragraph treated as a thematic break, not a setext heading',
         lines[j]!.lineNo,
       );
       flushParagraph(para, ctx, blocks);

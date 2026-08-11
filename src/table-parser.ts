@@ -236,8 +236,14 @@ export function buildTable(
       // like a sentence. A full sentence under a table is a caption, and
       // folding it in would corrupt the last cell's value.
       const isSentence = /[.!?]\s*$/.test(frag) && frag.split(/\s+/).length > 5;
+      // It must also carry no cell structure of its own. A row that merely
+      // omits a trailing column ("| tesseract-ocr | ... |" with no build
+      // number) is still a row, and folding it away deletes an entire entry —
+      // the single most destructive thing this parser did on real documents.
+      // Only a line with no delimiters at all is a genuine wrapped cell.
       if (
         prev !== undefined &&
+        fragCells === 1 &&
         /^[a-z(,;)]/.test(frag) &&
         !isSentence &&
         !startsAnyBlock(t) &&
@@ -310,7 +316,16 @@ export function buildTable(
 
   // Determine column count: header wins unless a supermajority of body rows
   // agree on a larger count (the body outvotes a truncated header).
-  const bodyCellCounts = bodyLines.map((l) => splitRow(l.text).length);
+  // Trailing empty cells do not widen a table. Rows ending in a stray `||`
+  // are common and GFM ignores the extra cell; counting it widened whole
+  // tables to an unlabelled extra column and then "repaired" the separator
+  // and every row to match.
+  const bodyCellCounts = bodyLines.map((l) => {
+    const cells = splitRow(l.text);
+    let last = cells.length;
+    while (last > 1 && cells[last - 1]!.trim() === '') last--;
+    return last;
+  });
   let cols = headerCells.length;
   if (bodyCellCounts.length >= 2) {
     const countFreq = new Map<number, number>();
@@ -342,6 +357,9 @@ export function buildTable(
   }
 
   const makeRow = (cells: string[], lineNo: number): TableRow => {
+    // A stray `||` at the end of a row is not overflow — GFM drops the empty
+    // cell, and merging it into a real column corrupts that column's value.
+    while (cells.length > cols && cells[cells.length - 1]!.trim() === '') cells = cells.slice(0, -1);
     if (cells.length > cols) {
       // Merge the overflow, choosing WHICH cells to join by how well the
       // result fits the column shapes the clean rows established. Always

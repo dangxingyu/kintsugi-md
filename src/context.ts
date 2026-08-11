@@ -26,12 +26,6 @@ export interface Ctx {
   /** Source line numbers occupied by reference definitions (skipped as blocks). */
   refLines: Set<number>;
   /**
-   * True when the document clearly uses ATX (`## Heading`) style. In such a
-   * document a dash line is a divider, not a setext underline — nobody mixes
-   * both conventions, but LLMs emit `---` separators constantly.
-   */
-  prefersThematicBreak: boolean;
-  /**
    * True when the document uses markdown structure elsewhere (headings,
    * fences, tables). Escaping is a deliberate act, so `1\.` only becomes a
    * list in a document that is evidently markdown to begin with.
@@ -106,26 +100,6 @@ export function indexHtmlClosers(lines: Line[]): Map<string, number[]> {
     }
   }
   return index;
-}
-
-/** Does this document use ATX headings as its heading convention? */
-export function detectAtxStyle(lines: Line[]): boolean {
-  let atx = 0;
-  let inFence: FenceOpen | null = null;
-  for (const line of lines) {
-    if (inFence) {
-      const bare = matchBareFence(line.text);
-      if (bare && bare.char === inFence.char && bare.len >= inFence.len) inFence = null;
-      continue;
-    }
-    const open = matchFenceOpen(line.text);
-    if (open) {
-      inFence = open;
-      continue;
-    }
-    if (/^ {0,3}#{1,6} +\S/.test(line.text)) atx++;
-  }
-  return atx >= 2;
 }
 
 /**
