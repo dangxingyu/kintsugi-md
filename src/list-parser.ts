@@ -183,8 +183,11 @@ export function matchListMarker(text: string): ListMarker | null {
     const indent = m[1]!.length;
     const ch = m[2]!;
     const rest = m[3]!;
-    // `*Item*` is emphasis, not a bullet.
-    if (ch === '*' && /\*\s*$/.test(rest)) return null;
+    // `*Item*` is emphasis, not a bullet — and so is `*Note*: the rest of the
+    // sentence`, where the closing delimiter is mid-line rather than at the
+    // end. Reading that as a bullet ate the opening `*` and left the closing
+    // one stranded in the text.
+    if (ch === '*' && rest.includes('*')) return null;
     return {
       ...base, indent, ordered: false, bulletChar: ch, num: 0,
       contentIndent: indent + 1, rest, style: 'bullet', missingSpace: true,
@@ -359,11 +362,50 @@ export function consumeList(lines: Line[], start: number, first: ListMarker, ctx
           itemLines.push(...pendingBlanks);
           pendingBlanks = [];
         }
+        let absorbFence: FenceOpen | null = null;
+        let runIndent: boolean | null = null;
+        let runEnd = j;
         for (let p = j; p < resume; p++) {
           const src = lines[p]!;
-          // A bare command line becomes a code block inside the item; fences
-          // and blanks carry through as they are.
-          itemLines.push(looksLikeCommand(src.text) ? { text: '    ' + src.text.trim(), lineNo: src.lineNo } : src);
+          // Fenced content is never rewritten. `looksLikeCommand` was being
+          // asked line by line with no idea it was inside a fence, so it
+          // indented `cd LightRAG` and left `uv sync` at column 0 within the
+          // same block — shredding the code it was trying to attach.
+          if (absorbFence !== null) {
+            const bare = matchBareFence(src.text);
+            if (bare && bare.char === absorbFence.char && bare.len >= absorbFence.len) absorbFence = null;
+            itemLines.push(src);
+            continue;
+          }
+          const opensFence = matchFenceOpen(src.text);
+          if (opensFence) {
+            absorbFence = opensFence;
+            runIndent = null;
+            itemLines.push(src);
+            continue;
+          }
+          if (isBlank(src.text)) {
+            runIndent = null;
+            itemLines.push(src);
+            continue;
+          }
+          // Only a BARE command line becomes an indented code block, and the
+          // whole contiguous run goes together. Deciding line by line split a
+          // two-line shell block across two indent levels, because a long
+          // `git remote set-url …` fails the word-count test that the
+          // `git checkout -b dev` under it passes.
+          if (runIndent === null) {
+            let end = p;
+            let anyCommand = false;
+            while (end < resume && !isBlank(lines[end]!.text) && matchFenceOpen(lines[end]!.text) === null) {
+              if (looksLikeCommand(lines[end]!.text)) anyCommand = true;
+              end++;
+            }
+            runIndent = anyCommand;
+            runEnd = end;
+          }
+          itemLines.push(runIndent ? { text: '    ' + src.text.trim(), lineNo: src.lineNo } : src);
+          if (p + 1 >= runEnd) runIndent = null;
         }
         itemEndLine = lines[resume - 1]!.lineNo;
         j = resume;
@@ -456,20 +498,79 @@ export function consumeList(lines: Line[], start: number, first: ListMarker, ctx
  * level; a gap of two or more starts a real level. Continuation lines shift
  * with the marker they follow.
  */
+/**
+ * Which lines sit inside a fenced code block (including the fence lines).
+ * Anything in here is content, never structure: a JSDoc ` * ` continuation
+ * inside a ```` ```ts ```` block is not a list marker, and reading it as one
+ * made the indent normalizer restripe the comment and break its alignment.
+ */
+function fencedLines(lines: Line[]): boolean[] {
+  const mask = new Array<boolean>(lines.length).fill(false);
+  let open: FenceOpen | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]!.text;
+    if (open !== null) {
+      mask[i] = true;
+      const bare = matchBareFence(t);
+      if (bare && bare.char === open.char && bare.len >= open.len) open = null;
+      continue;
+    }
+    const started = matchFenceOpen(t);
+    if (started) {
+      open = started;
+      mask[i] = true;
+    }
+  }
+  return mask;
+}
+
+/**
+ * Effective indent to shift each line by: its own, except inside a fence,
+ * where every line in the run shares the run's shallowest indent so the block
+ * moves rigidly and the code keeps its shape.
+ */
+function regionIndent(lines: Line[], fenced: boolean[]): number[] {
+  const out = lines.map((l) => indentOf(l.text));
+  let i = 0;
+  while (i < lines.length) {
+    if (!fenced[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    let min = Number.POSITIVE_INFINITY;
+    while (j < lines.length && fenced[j]) {
+      if (!isBlank(lines[j]!.text)) min = Math.min(min, indentOf(lines[j]!.text));
+      j++;
+    }
+    if (!Number.isFinite(min)) min = 0;
+    for (let k = i; k < j; k++) out[k] = min;
+    i = j;
+  }
+  return out;
+}
+
 export function normalizeIndents(lines: Line[]): { lines: Line[]; adjusted: boolean } {
+  const fenced = fencedLines(lines);
   const indents = new Set<number>();
-  for (const l of lines) {
-    if (isBlank(l.text)) continue;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!;
+    if (isBlank(l.text) || fenced[i]) continue;
     if (matchListMarker(l.text)) indents.add(indentOf(l.text));
   }
   if (indents.size === 0) return { lines, adjusted: false };
 
   // Pull a uniformly over-indented run of markers back to the left margin.
   // Without this a nested list written at seven spaces reads as indented code.
+  // Inside a fence every line must move by the SAME amount or the code's own
+  // indentation is destroyed, so a fenced run is shifted by the shallowest
+  // indent in that run rather than each line by its own.
+  const region = regionIndent(lines, fenced);
+
   const minMarker = Math.min(...indents);
   if (minMarker > 0) {
-    const shifted = lines.map((l) =>
-      isBlank(l.text) ? l : { text: l.text.slice(Math.min(minMarker, indentOf(l.text))), lineNo: l.lineNo },
+    const shifted = lines.map((l, i) =>
+      isBlank(l.text) ? l : { text: l.text.slice(Math.min(minMarker, region[i]!)), lineNo: l.lineNo },
     );
     const inner = normalizeIndents(shifted);
     // Pulling a uniformly indented block to the margin changes no hierarchy,
@@ -489,14 +590,17 @@ export function normalizeIndents(lines: Line[]): { lines: Line[]; adjusted: bool
   let adjusted = false;
   let delta = 0;
 
-  const out = lines.map((l) => {
+  const out = lines.map((l, i) => {
     if (isBlank(l.text)) return l;
     const ind = indentOf(l.text);
 
-    if (!matchListMarker(l.text)) {
-      // Continuation lines follow the marker they belong to.
+    if (fenced[i] || !matchListMarker(l.text)) {
+      // Continuation lines follow the marker they belong to. A fenced line is
+      // always continuation, never a marker, and clamps its shift to the run's
+      // shallowest indent so the whole block moves as one.
       if (delta === 0) return l;
-      const shifted = Math.max(0, ind + delta);
+      const eff = fenced[i] ? Math.max(delta, -region[i]!) : delta;
+      const shifted = Math.max(0, ind + eff);
       return { text: ' '.repeat(shifted) + l.text.slice(ind), lineNo: l.lineNo };
     }
 
@@ -593,7 +697,13 @@ export function findSandwichedBlockEnd(lines: Line[], start: number, first: List
       const m = matchListMarker(t);
       // Only pull the block in if it was code or a command. A prose paragraph
       // between two lists is a label that legitimately separates them.
-      if (m && compatibleMarker(first, m)) return sawAbsorbable ? j : -1;
+      // Absorb only a block the author attached to the item — no blank line
+      // between them. `1. step` / blank / fence / blank / `2. step` is an
+      // ordinary idiom that every parser renders sensibly, and pulling those
+      // fences into the item made parallel steps render at different indents
+      // depending on whether another item happened to follow. A bare command
+      // is still rescued across a blank line, because nothing else will.
+      if (m && compatibleMarker(first, m)) return (attached || sawCommand) && sawAbsorbable ? j : -1;
     }
     if (isBlank(t)) continue;
     if (looksLikeCommand(t)) {

@@ -366,3 +366,91 @@ describe('cluster 7: table rows are never folded away', () => {
     expect(repairs(src).map((d) => d.code)).toContain('table-merged-continuation');
   });
 });
+
+describe('cluster 8: list indent repairs never touch fenced content', () => {
+  it('does not re-indent lines inside an absorbed fence', () => {
+    // `looksLikeCommand` was asked line by line with no idea it was inside a
+    // fence, so it indented `cd app` and left the long line at column 0,
+    // shredding the block it was attaching.
+    const src = [
+      '1. Clone it',
+      '```bash',
+      'git remote set-url origin https://github.com/example/a-very-long-name.git',
+      'cd app',
+      '```',
+      '2. Build it',
+    ].join('\n');
+    const { html } = render(src);
+    const code = /<code[^>]*>([\s\S]*?)<\/code>/.exec(html)?.[1] ?? '';
+    expect(code).toContain('git remote set-url');
+    expect(code).toContain('cd app');
+    // Neither line gained indentation the author did not write.
+    for (const line of code.split('\n').filter(Boolean)) expect(line).not.toMatch(/^ /);
+  });
+
+  it('leaves a JSDoc block inside a fenced ts example alone', () => {
+    // ` * ` continuation lines were read as list markers and re-striped.
+    const src = [
+      '- Example:',
+      '```ts',
+      '/**',
+      ' * The standard app config.',
+      ' */',
+      'export const a = 1;',
+      '```',
+      '- Next',
+    ].join('\n');
+    const { html } = render(src);
+    expect(html).toContain(' * The standard app config.');
+    expect(html).toContain(' */');
+  });
+
+  it('indents a bare command run uniformly or not at all', () => {
+    const src = [
+      '1. Set the remote',
+      '',
+      'git remote set-url origin https://github.com/example/some-quite-long-name.git',
+      'git checkout -b dev',
+      '',
+      '2. Done',
+    ].join('\n');
+    const { html } = render(src);
+    const code = /<code[^>]*>([\s\S]*?)<\/code>/.exec(html)?.[1] ?? '';
+    const lines = code.split('\n').filter((l) => l.trim());
+    expect(lines.length).toBeGreaterThan(1);
+    const indents = new Set(lines.map((l) => /^\s*/.exec(l)![0].length));
+    expect(indents.size).toBe(1);
+  });
+});
+
+describe('cluster 8b: only an attached block is absorbed into a list item', () => {
+  it('leaves a blank-line-separated fence as a sibling of the list', () => {
+    const src = ['1. First step', '', '```bash', 'npm install', '```', '', '2. Second step'].join('\n');
+    expect(repairs(src)).toEqual([]);
+  });
+
+  it('STILL absorbs a fence attached with no blank line', () => {
+    // The Awesome-WAF shape: each bullet's payload directly under it.
+    const src = ['- [Bypass A](https://x.com/a)', '```', "1'UNION/*!0SELECT", '```', '- [Bypass B](https://x.com/b)'].join('\n');
+    expect(repairs(src).map((d) => d.code)).toContain('list-indent-adjusted');
+  });
+
+  it('STILL rescues bare commands left flush-left between steps', () => {
+    const src = ['1. Install', '', 'npm install', '', '2. Run'].join('\n');
+    expect(repairs(src).map((d) => d.code)).toContain('list-indent-adjusted');
+  });
+});
+
+describe('cluster 8c: an italic lead-in is not a bullet', () => {
+  it('renders *Note*: text as emphasis, not a list item', () => {
+    const src = '*Note*: I already ran this script.\n*Tip*: run it twice.';
+    const { html } = render(src);
+    expect(html).toContain('<em>Note</em>');
+    expect(html).not.toContain('<li>');
+  });
+
+  it('STILL treats a run of -Item bullets as a list', () => {
+    const { html } = render('-First\n-Second\n-Third');
+    expect(count(html, '<li>')).toBe(3);
+  });
+});
